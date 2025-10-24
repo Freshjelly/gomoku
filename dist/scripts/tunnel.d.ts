@@ -7,6 +7,8 @@ export interface TunnelResult {
 export interface StartTunnelOptions {
     timeoutMs?: number;
     silent?: boolean;
+    protocol?: 'quic' | 'http2' | 'auto';
+    targetUrl?: string;
 }
 /**
  * Cloudflare Tunnelを起動し、公開URLを取得する

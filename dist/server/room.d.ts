@@ -1,14 +1,16 @@
 import { PlayerColor, GameResult } from './types';
+import { GameRules } from './engine/rules';
 export declare class Board {
     private readonly size;
     private board;
-    constructor();
+    private readonly rules;
+    constructor(rules?: GameRules);
     placeStone(x: number, y: number, color: PlayerColor): boolean;
     isValidMove(x: number, y: number): boolean;
     getBoard(): number[][];
     getStone(x: number, y: number): number;
     checkWin(x: number, y: number, color: PlayerColor): Array<[number, number]> | null;
-    private checkLine;
+    isDraw(): boolean;
 }
 export declare class Room {
     readonly roomId: string;
@@ -19,6 +21,7 @@ export declare class Room {
     private gameEnded;
     private winner;
     private winLine;
+    private queueTail;
     constructor(roomId: string);
     join(sessionId: string, color: PlayerColor, connection: any): boolean;
     disconnect(sessionId: string): void;
@@ -55,8 +58,11 @@ export declare class Room {
         winner: PlayerColor | null;
         winLine: Array<[number, number]> | null;
     };
+    getConnections(): Map<string, any>;
+    enqueue<T>(fn: () => T | Promise<T>): Promise<T>;
     isEmpty(): boolean;
     getPlayerCount(): number;
     getConnectionCount(): number;
+    startNewGame(): void;
 }
 //# sourceMappingURL=room.d.ts.map

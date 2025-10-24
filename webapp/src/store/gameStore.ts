@@ -36,7 +36,7 @@ export interface GameState {
   setRoomId: (roomId: string | null) => void;
   setPlayerColor: (color: PlayerColor | null) => void;
   setCurrentTurn: (turn: PlayerColor | null) => void;
-  setBoard: (board: number[][]) => void;
+  setBoard: (board: number[][] | ((prev: number[][]) => number[][])) => void;
   setGameEnded: (ended: boolean) => void;
   setWinner: (winner: PlayerColor | null) => void;
   setWinLine: (line: Array<[number, number]> | null) => void;
@@ -84,7 +84,9 @@ export const useGameStore = create<GameState>()(
     setRoomId: (roomId) => set({ roomId }),
     setPlayerColor: (color) => set({ playerColor: color }),
     setCurrentTurn: (turn) => set({ currentTurn: turn }),
-    setBoard: (board) => set({ board }),
+    setBoard: (board: number[][] | ((prev: number[][]) => number[][])) => set((state) => ({
+    board: typeof board === 'function' ? board(state.board) : board
+  })),
     setGameEnded: (ended) => set({ gameEnded: ended }),
     setWinner: (winner) => set({ winner }),
     setWinLine: (line) => set({ winLine: line }),

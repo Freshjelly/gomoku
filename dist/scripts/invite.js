@@ -17,9 +17,6 @@ async function createRoom(baseUrl = 'http://localhost:3000') {
     try {
         const response = await (0, undici_1.fetch)(`${baseUrl}/api/rooms`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
         });
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);

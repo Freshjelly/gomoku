@@ -170,8 +170,14 @@ export function useGomokuWs() {
           break;
 
         case 'MOVE':
+          // Update board with the new move
+          setBoard((currentBoard: number[][]) => {
+            const newBoard = currentBoard.map((row: number[]) => [...row]);
+            const colorNum = message.color === 'black' ? 1 : 2;
+            newBoard[message.y][message.x] = colorNum;
+            return newBoard;
+          });
           setCurrentTurn(message.nextTurn);
-          // Board will be updated by the game store
           break;
 
         case 'END':

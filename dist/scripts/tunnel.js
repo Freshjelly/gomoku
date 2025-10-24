@@ -23,10 +23,18 @@ async function startCloudflareTunnel(port, options = {}) {
         return null;
     }
     if (!options.silent) {
-        console.log(picocolors_1.default.blue('🌐 Starting Cloudflare Tunnel...'));
+        const proto = options.protocol ? ` (${options.protocol})` : '';
+        console.log(picocolors_1.default.blue(`🌐 Starting Cloudflare Tunnel${proto}...`));
     }
-    const child = (0, child_process_1.spawn)(binary, ['tunnel', '--url', `http://localhost:${port}`], {
+    const target = options.targetUrl ?? `http://127.0.0.1:${port}`;
+    const args = ['tunnel'];
+    if (options.protocol) {
+        args.push('--protocol', options.protocol);
+    }
+    args.push('--url', target);
+    const child = (0, child_process_1.spawn)(binary, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, UNBUFFERED: '1' },
     });
     const timeoutMs = options.timeoutMs ?? 15000;
     return new Promise((resolve, reject) => {
@@ -61,7 +69,10 @@ async function startCloudflareTunnel(port, options = {}) {
             }
             const text = data.toString();
             buffer += text;
-            const match = buffer.match(TUNNEL_URL_REGEX);
+            // Check for URL in the new text immediately
+            const immediateMatch = text.match(TUNNEL_URL_REGEX);
+            const bufferMatch = buffer.match(TUNNEL_URL_REGEX);
+            const match = immediateMatch || bufferMatch;
             if (match) {
                 resolved = true;
                 clearTimeout(timer);
@@ -84,10 +95,32 @@ async function startCloudflareTunnel(port, options = {}) {
             }
         });
         child.stderr?.on('data', (data) => {
-            if (resolved || options.silent) {
+            if (resolved) {
                 return;
             }
-            process.stdout.write(picocolors_1.default.gray(`[cloudflared] ${data.toString()}`));
+            const text = data.toString();
+            // Check stderr for URL as well
+            const match = text.match(TUNNEL_URL_REGEX);
+            if (match) {
+                resolved = true;
+                clearTimeout(timer);
+                if (!options.silent) {
+                    console.log(picocolors_1.default.green(`🌐 Tunnel URL: ${match[0]}`));
+                }
+                const stop = () => {
+                    cleanup();
+                    killProcess(child);
+                };
+                child.once('exit', cleanup);
+                resolve({
+                    url: match[0],
+                    process: child,
+                    stop,
+                });
+            }
+            else if (!options.silent) {
+                process.stdout.write(picocolors_1.default.gray(`[cloudflared] ${text}`));
+            }
         });
         child.once('error', (error) => {
             if (resolved) {

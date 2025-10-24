@@ -28,6 +28,36 @@ export const boardConfig = {
 };
 
 /**
+ * 画面サイズに応じた盤面設定を計算（レスポンシブ）
+ */
+export function getResponsiveBoardConfig(): typeof boardConfig {
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  // モバイル（縦持ち）の場合は画面幅の90%、横持ちは高さの80%
+  const isPortrait = viewportHeight > viewportWidth;
+  const maxSize = isPortrait
+    ? Math.min(viewportWidth * 0.9, 600)
+    : Math.min(viewportHeight * 0.8, 600);
+
+  // タッチターゲット最小44px確保のため、cellPxを計算
+  const totalSize = boardConfig.size;
+  const minCellPx = 24; // 最小セルサイズ
+  const maxCellPx = 50; // 最大セルサイズ
+
+  // マージンを考慮して最適なcellPxを計算
+  const margin = Math.max(20, maxSize * 0.05);
+  const availableSize = maxSize - margin * 2;
+  const cellPx = Math.max(minCellPx, Math.min(maxCellPx, availableSize / (totalSize - 1)));
+
+  return {
+    ...boardConfig,
+    marginPx: margin,
+    cellPx: cellPx,
+  };
+}
+
+/**
  * 盤の論理サイズを計算
  */
 export function getBoardLogicalSize(cfg = boardConfig): number {

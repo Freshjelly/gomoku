@@ -5,6 +5,7 @@ import { Card } from '../components/ui/Card';
 import { Header } from '../components/Header';
 import { createRoom } from '../lib/api';
 import { copyToClipboard } from '../lib/clipboard';
+import { generateQRCodeDataURL } from '../lib/qrcode';
 import { useToast } from '../hooks/useToast';
 
 export default function Home() {
@@ -111,6 +112,20 @@ export default function Home() {
                     <Button onClick={handleCopyInviteLink} className="btn-secondary">
                       コピー
                     </Button>
+                  </div>
+                </div>
+
+                {/* QRコード表示 */}
+                <div>
+                  <label className="block text-sm font-medium text-text-secondary mb-2">
+                    QRコード（スマホでスキャン）
+                  </label>
+                  <div className="flex justify-center p-4 bg-white rounded-lg">
+                    <img
+                      src={generateQRCodeDataURL(roomData.inviteUrl)}
+                      alt="招待用QRコード"
+                      className="w-48 h-48"
+                    />
                   </div>
                 </div>
 

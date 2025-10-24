@@ -1,5 +1,5 @@
 export type PlayerColor = 'black' | 'white';
-export type GameResult = 'black_win' | 'white_win' | 'resign' | 'opponent_left';
+export type GameResult = 'black_win' | 'white_win' | 'draw' | 'resign' | 'opponent_left';
 export interface JoinMessage {
     type: 'JOIN';
     roomId: string;
@@ -13,7 +13,10 @@ export interface PlaceMessage {
 export interface ResignMessage {
     type: 'RESIGN';
 }
-export type ClientMessage = JoinMessage | PlaceMessage | ResignMessage;
+export interface NewGameMessage {
+    type: 'NEW_GAME';
+}
+export type ClientMessage = JoinMessage | PlaceMessage | ResignMessage | NewGameMessage | PingMessage | PongMessage;
 export interface StateMessage {
     type: 'STATE';
     board: number[][];
@@ -23,6 +26,7 @@ export interface StateMessage {
         blackConnected: boolean;
         whiteConnected: boolean;
     };
+    roomId?: string;
 }
 export interface MoveMessage {
     type: 'MOVE';
@@ -55,6 +59,7 @@ export interface CreateRoomResponse {
 }
 export declare enum ErrorCode {
     INVALID_TOKEN = "INVALID_TOKEN",
+    TOKEN_EXPIRED = "TOKEN_EXPIRED",
     ROOM_NOT_FOUND = "ROOM_NOT_FOUND",
     ROOM_FULL = "ROOM_FULL",
     INVALID_MOVE = "INVALID_MOVE",

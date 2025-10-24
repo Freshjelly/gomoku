@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { boardConfig, getBoardLogicalSize } from '../lib/boardConfig';
+import { boardConfig, getBoardLogicalSize, getResponsiveBoardConfig } from '../lib/boardConfig';
 import { getCanvasLogicalXY, mapToGrid, gridToLogical } from '../lib/coords';
 import { useGameStore } from '../store/gameStore';
 import { useGomokuWs } from '../hooks/useGomokuWs';
@@ -9,6 +9,7 @@ import { canClick } from '../lib/throttle';
 export function BoardCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hoveredCell, setHoveredCell] = useState<[number, number] | null>(null);
+  const [currentConfig, setCurrentConfig] = useState(getResponsiveBoardConfig());
   const lastClickTime = useRef(0);
 
   const { board, playerColor, currentTurn, winLine, soundEnabled, gameEnded } = useGameStore();
@@ -16,9 +17,9 @@ export function BoardCanvas() {
   const { showToast } = useToast();
 
   // Canvas初期化と高DPI対応
-  const setupCanvas = useCallback((canvas: HTMLCanvasElement) => {
+  const setupCanvas = useCallback((canvas: HTMLCanvasElement, config: typeof boardConfig) => {
     const dpr = window.devicePixelRatio || 1;
-    const logicalSize = getBoardLogicalSize();
+    const logicalSize = getBoardLogicalSize(config);
 
     // CSS表示サイズ
     canvas.style.width = `${logicalSize}px`;
@@ -43,8 +44,8 @@ export function BoardCanvas() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const { size, marginPx, cellPx, starPoints, stoneSizeRatio } = boardConfig;
-    const logicalSize = getBoardLogicalSize();
+    const { size, marginPx, cellPx, starPoints, stoneSizeRatio } = currentConfig;
+    const logicalSize = getBoardLogicalSize(currentConfig);
 
     // 背景クリア
     ctx.clearRect(0, 0, logicalSize, logicalSize);
@@ -80,7 +81,7 @@ export function BoardCanvas() {
     // 星（天元）の描画
     ctx.fillStyle = ctx.strokeStyle;
     starPoints.forEach(([gx, gy]) => {
-      const { x, y } = gridToLogical(gx, gy);
+      const { x, y } = gridToLogical(gx, gy, currentConfig);
       ctx.beginPath();
       ctx.arc(x, y, 3, 0, Math.PI * 2);
       ctx.fill();
@@ -93,7 +94,7 @@ export function BoardCanvas() {
         const stoneValue = board[gy][gx];
         if (stoneValue === 0) continue;
 
-        const { x, y } = gridToLogical(gx, gy);
+        const { x, y } = gridToLogical(gx, gy, currentConfig);
 
         // 石本体
         ctx.beginPath();
@@ -126,7 +127,7 @@ export function BoardCanvas() {
     if (hoveredCell && playerColor && currentTurn === playerColor && !gameEnded) {
       const [gx, gy] = hoveredCell;
       if (board[gy][gx] === 0) {
-        const { x, y } = gridToLogical(gx, gy);
+        const { x, y } = gridToLogical(gx, gy, currentConfig);
         ctx.globalAlpha = 0.5;
         ctx.beginPath();
         ctx.arc(x, y, stoneRadius, 0, Math.PI * 2);
@@ -137,7 +138,7 @@ export function BoardCanvas() {
         ctx.globalAlpha = 1.0;
       }
     }
-  }, [board, winLine, hoveredCell, playerColor, currentTurn, gameEnded]);
+  }, [board, winLine, hoveredCell, playerColor, currentTurn, gameEnded, currentConfig]);
 
   // Pointer down/up ハンドラ
   const handlePointerDown = useCallback(
@@ -150,7 +151,7 @@ export function BoardCanvas() {
       lastClickTime.current = now;
 
       const logicalXY = getCanvasLogicalXY(e, canvas);
-      const { gx, gy, ok } = mapToGrid(logicalXY);
+      const { gx, gy, ok } = mapToGrid(logicalXY, currentConfig);
 
       if (!ok) return;
 
@@ -182,7 +183,7 @@ export function BoardCanvas() {
         } catch {}
       }
     },
-    [board, playerColor, currentTurn, gameEnded, placeStone, soundEnabled, showToast]
+    [board, playerColor, currentTurn, gameEnded, placeStone, soundEnabled, showToast, currentConfig]
   );
 
   const handlePointerMove = useCallback((e: PointerEvent) => {
@@ -190,14 +191,14 @@ export function BoardCanvas() {
     if (!canvas) return;
 
     const logicalXY = getCanvasLogicalXY(e, canvas);
-    const { gx, gy, ok } = mapToGrid(logicalXY);
+    const { gx, gy, ok } = mapToGrid(logicalXY, currentConfig);
 
     if (ok) {
       setHoveredCell([gx, gy]);
     } else {
       setHoveredCell(null);
     }
-  }, []);
+  }, [currentConfig]);
 
   const handlePointerLeave = useCallback(() => {
     setHoveredCell(null);
@@ -208,7 +209,7 @@ export function BoardCanvas() {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    setupCanvas(canvas);
+    setupCanvas(canvas, currentConfig);
 
     canvas.addEventListener('pointerdown', handlePointerDown as any);
     canvas.addEventListener('pointermove', handlePointerMove as any);
@@ -219,14 +220,16 @@ export function BoardCanvas() {
       canvas.removeEventListener('pointermove', handlePointerMove as any);
       canvas.removeEventListener('pointerleave', handlePointerLeave as any);
     };
-  }, [setupCanvas, handlePointerDown, handlePointerMove, handlePointerLeave]);
+  }, [setupCanvas, handlePointerDown, handlePointerMove, handlePointerLeave, currentConfig]);
 
   // リサイズ対応
   useEffect(() => {
     const handleResize = () => {
+      const newConfig = getResponsiveBoardConfig();
+      setCurrentConfig(newConfig);
       const canvas = canvasRef.current;
       if (canvas) {
-        setupCanvas(canvas);
+        setupCanvas(canvas, newConfig);
         draw();
       }
     };

@@ -6,6 +6,7 @@ exports.ErrorCode = void 0;
 var ErrorCode;
 (function (ErrorCode) {
     ErrorCode["INVALID_TOKEN"] = "INVALID_TOKEN";
+    ErrorCode["TOKEN_EXPIRED"] = "TOKEN_EXPIRED";
     ErrorCode["ROOM_NOT_FOUND"] = "ROOM_NOT_FOUND";
     ErrorCode["ROOM_FULL"] = "ROOM_FULL";
     ErrorCode["INVALID_MOVE"] = "INVALID_MOVE";

@@ -156,11 +156,17 @@ class DevOrchestrator {
         }
         try {
             this.tunnelState = 'starting';
-            const result = await (0, tunnel_1.startCloudflareTunnel)(this.port, { silent: true });
+            // Try QUIC first, then http2 as fallback
+            let result = await (0, tunnel_1.startCloudflareTunnel)(this.port, { silent: true, protocol: 'quic', timeoutMs: 30000 });
+            if (!result?.url) {
+                console.log(picocolors_1.default.yellow('⚠️  QUIC tunnel did not provide URL, falling back to http2...'));
+                result = await (0, tunnel_1.startCloudflareTunnel)(this.port, { silent: true, protocol: 'http2', timeoutMs: 60000 });
+            }
             if (result?.url) {
                 this.tunnel = result;
                 this.tunnelState = 'ready';
                 console.log(picocolors_1.default.green(`🌐 Tunnel URL: ${result.url}`));
+                await this.verifyTunnelHealth(result.url);
             }
             else {
                 this.tunnelState = 'failed';
@@ -170,6 +176,37 @@ class DevOrchestrator {
         catch (error) {
             this.tunnelState = 'failed';
             console.log(picocolors_1.default.red(`❌ Failed to start tunnel: ${error}`));
+        }
+    }
+    async verifyTunnelHealth(tunnelBase) {
+        const url = new URL('/health', tunnelBase).toString();
+        try {
+            const res = await (0, undici_1.fetch)(url);
+            if (res.ok) {
+                console.log(picocolors_1.default.green('🌐 Tunnel /health reachable'));
+            }
+            else {
+                const body = await res.text().catch(() => '');
+                const info = body ? `${res.status} ${res.statusText} - ${body.slice(0, 120)}` : `${res.status} ${res.statusText}`;
+                if (res.status === 502) {
+                    console.log(picocolors_1.default.yellow(`⚠️  Tunnel reached but origin returned 502 Bad Gateway (origin unreachable): ${info}`));
+                }
+                else {
+                    console.log(picocolors_1.default.yellow(`⚠️  Tunnel /health returned non-200: ${info}`));
+                }
+            }
+        }
+        catch (e) {
+            const msg = String(e?.message || e);
+            if (/ENOTFOUND|getaddrinfo/i.test(msg)) {
+                console.log(picocolors_1.default.yellow('⚠️  Tunnel DNS resolution issue (ENOTFOUND). Continuing without validation.'));
+            }
+            else if (/CERT|TLS|self[- ]signed/i.test(msg)) {
+                console.log(picocolors_1.default.yellow('⚠️  TLS/Certificate issue while reaching Tunnel. Continuing.'));
+            }
+            else {
+                console.log(picocolors_1.default.yellow(`⚠️  Failed to fetch Tunnel /health: ${msg}`));
+            }
         }
     }
     async presentInviteUrls(room) {
@@ -239,25 +276,40 @@ class DevOrchestrator {
     }
     async runSmokeTest(room) {
         console.log(picocolors_1.default.blue('🧪 Running smoke test (JOIN → PLACE → MOVE)...'));
-        const wsUrl = new URL('/ws', this.baseUrl);
-        wsUrl.protocol = wsUrl.protocol.replace('http', 'ws');
+        // Local (127.0.0.1) to avoid IPv6/localhost issues
+        const localWsUrl = `ws://127.0.0.1:${this.port}/ws`;
+        await this.execOneSmoke('Local', localWsUrl, room);
+        // Tunnel as wss if available
+        if (this.tunnel?.url) {
+            const t = new URL(this.tunnel.url);
+            t.pathname = '/ws';
+            t.protocol = t.protocol.replace('http', 'ws');
+            const tunnelWs = t.toString();
+            await this.execOneSmoke('Tunnel', tunnelWs, room);
+        }
+        else {
+            console.log(picocolors_1.default.gray('🧪 Tunnel smoke skipped (no URL)'));
+        }
+    }
+    async execOneSmoke(label, wsUrl, room) {
+        process.stdout.write(picocolors_1.default.blue(`   • ${label} → ${wsUrl}\n`));
         try {
             const result = await (0, smoke_ws_1.runSmokeTest)({
                 roomId: room.roomId,
                 token: room.joinToken,
-                wsUrl: wsUrl.toString(),
+                wsUrl,
                 timeout: 10000,
             });
             if (result.success) {
-                console.log(picocolors_1.default.green('🧪 Smoke test PASS'));
+                console.log(picocolors_1.default.green(`     ✔ ${label} smoke PASS`));
             }
             else {
-                console.log(picocolors_1.default.red(`🧪 Smoke test FAIL: ${result.error}`));
-                result.steps.forEach((step) => console.log(picocolors_1.default.gray(`  • ${step}`)));
+                console.log(picocolors_1.default.red(`     ✘ ${label} smoke FAIL: ${result.error}`));
+                result.steps.forEach((s) => console.log(picocolors_1.default.gray(`       - ${s}`)));
             }
         }
-        catch (error) {
-            console.log(picocolors_1.default.red(`🧪 Smoke test error: ${error}`));
+        catch (e) {
+            console.log(picocolors_1.default.red(`     ✘ ${label} smoke error: ${e?.message || e}`));
         }
     }
     setupSignalHandlers() {
