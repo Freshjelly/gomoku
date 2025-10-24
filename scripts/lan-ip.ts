@@ -1,77 +1,62 @@
 import { networkInterfaces } from 'os';
-import { z } from 'zod';
+import { createServer } from 'net';
 
-const LanIpSchema = z.object({
-  ip: z.string(),
-  family: z.enum(['IPv4', 'IPv6']),
-  interface: z.string(),
-});
+function isPrivateIpv4(address: string): boolean {
+  const parts = address.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) {
+    return false;
+  }
 
-export type LanIp = z.infer<typeof LanIpSchema>;
+  if (parts[0] === 10) return true; // 10.0.0.0/8
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true; // 172.16.0.0/12
+  if (parts[0] === 192 && parts[1] === 168) return true; // 192.168.0.0/16
+
+  return false;
+}
+
+function ipPriority(address: string): number {
+  if (address.startsWith('10.')) return 0;
+  if (address.startsWith('172.')) {
+    const secondOctet = Number(address.split('.')[1]);
+    if (secondOctet >= 16 && secondOctet <= 31) {
+      return 1;
+    }
+  }
+  if (address.startsWith('192.168.')) return 2;
+  return 3;
+}
 
 /**
  * LAN IPアドレスを検出する
- * 優先順位: 10.x.x.x > 172.16-31.x.x > 192.168.x.x > その他のプライベートIP
+ * 優先順位: 10.x.x.x > 172.16-31.x.x > 192.168.x.x > localhost
  */
-export function getLanIp(): LanIp | null {
+export function getLanIp(): string {
   const interfaces = networkInterfaces();
-  const candidates: LanIp[] = [];
+  const candidates: string[] = [];
 
-  for (const [interfaceName, addresses] of Object.entries(interfaces)) {
+  for (const addresses of Object.values(interfaces)) {
     if (!addresses) continue;
 
     for (const address of addresses) {
       if (address.internal || address.family !== 'IPv4') continue;
+      if (!isPrivateIpv4(address.address)) continue;
 
-      const ip = address.address;
-      const parts = ip.split('.').map(Number);
-
-      // プライベートIP範囲をチェック
-      if (
-        parts[0] === 10 || // 10.0.0.0/8
-        (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) || // 172.16.0.0/12
-        (parts[0] === 192 && parts[1] === 168) // 192.168.0.0/16
-      ) {
-        candidates.push({
-          ip,
-          family: 'IPv4',
-          interface: interfaceName,
-        });
-      }
+      candidates.push(address.address);
     }
   }
 
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) {
+    return 'localhost';
+  }
 
-  // 優先順位でソート
-  candidates.sort((a, b) => {
-    const aParts = a.ip.split('.').map(Number);
-    const bParts = b.ip.split('.').map(Number);
-
-    // 10.x.x.x が最優先
-    if (aParts[0] === 10 && bParts[0] !== 10) return -1;
-    if (bParts[0] === 10 && aParts[0] !== 10) return 1;
-
-    // 172.16-31.x.x が次
-    if (aParts[0] === 172 && bParts[0] !== 172) return -1;
-    if (bParts[0] === 172 && aParts[0] !== 172) return 1;
-
-    // 192.168.x.x が最後
-    if (aParts[0] === 192 && bParts[0] !== 192) return -1;
-    if (bParts[0] === 192 && aParts[0] !== 192) return 1;
-
-    return 0;
-  });
-
-  return candidates[0];
+  candidates.sort((a, b) => ipPriority(a) - ipPriority(b));
+  return candidates[0] ?? 'localhost';
 }
 
 /**
  * 利用可能なポートを検出する
  */
 export async function findAvailablePort(startPort = 3000, maxAttempts = 10): Promise<number> {
-  const { createServer } = await import('net');
-
   for (let i = 0; i < maxAttempts; i++) {
     const port = startPort + i;
 
@@ -79,22 +64,22 @@ export async function findAvailablePort(startPort = 3000, maxAttempts = 10): Pro
       await new Promise<void>((resolve, reject) => {
         const server = createServer();
 
-        server.listen(port, () => {
-          server.close(() => resolve());
-        });
-
-        server.on('error', (err: any) => {
+        server.once('error', (err: NodeJS.ErrnoException) => {
+          server.close();
           if (err.code === 'EADDRINUSE') {
-            reject(new Error(`Port ${port} is in use`));
+            reject(err);
           } else {
             reject(err);
           }
+        });
+
+        server.listen(port, () => {
+          server.close(() => resolve());
         });
       });
 
       return port;
     } catch {
-      // ポートが使用中、次のポートを試す
       continue;
     }
   }

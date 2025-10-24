@@ -22,6 +22,6 @@ export declare function printInviteUrls(urls: ReturnType<typeof generateInviteUr
 /**
  * クリップボードに招待URLをコピーする
  */
-export declare function copyInviteUrl(url: string): Promise<boolean>;
+export declare function copyInviteUrl(url: string, label?: string): Promise<boolean>;
 export {};
 //# sourceMappingURL=invite.d.ts.map

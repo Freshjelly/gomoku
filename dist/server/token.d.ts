@@ -1,8 +1,9 @@
 export declare class TokenManager {
     private static readonly TOKEN_LENGTH;
-    private static readonly TOKEN_EXPIRY_MS;
     private static readonly ROOM_ID_LENGTH;
     private static readonly ROOM_ID_CHARS;
+    static get tokenTtlMinutes(): number;
+    static get tokenTtlMs(): number;
     static generateRoomId(): string;
     static generateJoinToken(): string;
     static isTokenValid(token: string, createdAt: number): boolean;

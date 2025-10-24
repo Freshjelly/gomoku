@@ -1,14 +1,19 @@
 import { spawn, ChildProcess } from 'child_process';
-import { existsSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { resolve } from 'path';
 import open from 'open';
 import pc from 'picocolors';
 import { fetch } from 'undici';
 
 import { ensureDependencies } from './clipboard';
 import { getLanIp, findAvailablePort } from './lan-ip';
-import { createRoom, generateInviteUrls, printInviteUrls, copyInviteUrl } from './invite';
-import { startCloudflareTunnel, killProcess } from './tunnel';
+import { createRoom, generateInviteUrls, copyInviteUrl } from './invite';
+import {
+  startCloudflareTunnel,
+  killProcess,
+  isCloudflaredInstalled,
+  TunnelResult,
+} from './tunnel';
 import { runSmokeTest } from './smoke-ws';
 
 interface DevOptions {
@@ -19,63 +24,54 @@ interface DevOptions {
   skipBrowser?: boolean;
 }
 
+type TunnelState = 'not-installed' | 'skipped' | 'starting' | 'ready' | 'failed';
+
 class DevOrchestrator {
   private processes: ChildProcess[] = [];
-  private tunnelResult: { url: string; process: ChildProcess } | null = null;
-  private port: number = 3000;
-  private lanIp: string | null = null;
+  private tunnel: TunnelResult | null = null;
+  private tunnelState: TunnelState = 'skipped';
+  private port = 3000;
+  private lanIp = 'localhost';
+  private baseUrl = '';
+  private shuttingDown = false;
 
-  constructor(private options: DevOptions) {}
+  constructor(private readonly options: DevOptions) {}
 
   async start(): Promise<void> {
     try {
-      console.log(pc.bold(pc.blue('🚀 Starting Gomoku Online Development Environment')));
+      console.log(pc.bold(pc.blue('🚀 Starting Gomoku Online environment')));
       console.log();
 
-      // 1. 依存関係の確認・インストール
+      loadEnvFile();
+
       await this.ensureDependencies();
-
-      // 2. ポートの検出
-      await this.detectPort();
-
-      // 3. プロセスの起動
-      await this.startProcesses();
-
-      // 4. サーバーの起動待機
+      await this.resolvePort();
+      await this.launchProcesses();
       await this.waitForServer();
 
-      // 5. LAN IPの検出
-      await this.detectLanIp();
+      this.detectLanIp();
+      const room = await this.createRoom();
+      await this.setupTunnel();
+      await this.presentInviteUrls(room);
 
-      // 6. ルームの作成
-      const roomData = await this.createRoom();
-
-      // 7. 招待URLの表示
-      this.printInviteUrls(roomData);
-
-      // 8. Cloudflare Tunnelの起動（オプション）
-      if (!this.options.skipTunnel) {
-        await this.tryStartTunnel();
-      }
-
-      // 9. スモークテストの実行（オプション）
-      if (!this.options.skipSmoke) {
-        await this.runSmokeTest(roomData);
-      }
-
-      // 10. ブラウザの自動オープン（オプション）
       if (!this.options.skipBrowser) {
-        await this.openBrowser(roomData);
+        await this.openBrowser(room);
+      } else {
+        console.log(pc.gray('🚀 Browser open skipped (--skip-browser)'));
       }
 
-      // 11. シグナルハンドラーの設定
+      if (!this.options.skipSmoke) {
+        await this.runSmokeTest(room);
+      } else {
+        console.log(pc.gray('🧪 Smoke test skipped (--skip-smoke)'));
+      }
+
       this.setupSignalHandlers();
 
       console.log();
-      console.log(pc.green('🎉 Development environment is ready!'));
-      console.log(pc.gray('Press Ctrl+C to stop all processes.'));
+      console.log(pc.green('🎉 Environment ready — press Ctrl+C to stop'));
     } catch (error) {
-      console.error(pc.red('❌ Failed to start development environment:'), error);
+      console.error(pc.red('❌ Failed to orchestrate environment:'), error);
       await this.cleanup();
       process.exit(1);
     }
@@ -86,237 +82,301 @@ class DevOrchestrator {
     ensureDependencies();
   }
 
-  private async detectPort(): Promise<void> {
-    console.log(pc.blue('🔍 Detecting available port...'));
+  private async resolvePort(): Promise<void> {
+    const requestedPort =
+      this.options.port ??
+      (process.env.PORT ? parseInt(process.env.PORT, 10) : NaN) ??
+      NaN;
 
-    if (this.options.port) {
-      this.port = this.options.port;
+    const basePort = Number.isFinite(requestedPort) ? requestedPort : 3000;
+    const availablePort = await findAvailablePort(basePort, 20);
+
+    if (availablePort !== basePort) {
+      console.log(
+        pc.yellow(
+          `⚠️  Port ${basePort} is busy, using next available port ${availablePort}`
+        )
+      );
     } else {
-      this.port = await findAvailablePort(3000);
+      console.log(pc.green(`✅ Using port ${availablePort}`));
     }
 
-    console.log(pc.green(`✅ Using port ${this.port}`));
+    this.port = availablePort;
+    process.env.PORT = String(this.port);
+    this.baseUrl = `http://localhost:${this.port}`;
   }
 
-  private async startProcesses(): Promise<void> {
-    console.log(pc.blue('🔄 Starting processes...'));
+  private async launchProcesses(): Promise<void> {
+    const script = this.options.dev ? 'start:pair' : 'start:prod';
+    console.log(pc.blue(`🔄 Starting npm run ${script}...`));
 
-    if (this.options.dev) {
-      // 開発モード: Vite + Server を並列起動
-      const webProcess = spawn('npm', ['run', 'web:dev'], {
-        cwd: 'webapp',
-        stdio: 'pipe',
-        shell: true,
-      });
+    const child = spawn('npm', ['run', script], {
+      stdio: 'pipe',
+      shell: true,
+      env: { ...process.env, PORT: String(this.port) },
+    });
 
-      const serverProcess = spawn('npm', ['run', 'server:dev'], {
-        stdio: 'pipe',
-        shell: true,
-        env: { ...process.env, PORT: this.port.toString() },
-      });
+    this.processes.push(child);
 
-      this.processes.push(webProcess, serverProcess);
+    child.stdout?.on('data', (data: Buffer) => {
+      process.stdout.write(pc.gray(`[${script}] ${data.toString()}`));
+    });
 
-      // プロセスの出力を表示
-      webProcess.stdout?.on('data', (data) => {
-        console.log(pc.cyan('[WEB]'), data.toString().trim());
-      });
+    child.stderr?.on('data', (data: Buffer) => {
+      process.stderr.write(pc.red(`[${script}] ${data.toString()}`));
+    });
 
-      serverProcess.stdout?.on('data', (data) => {
-        console.log(pc.yellow('[API]'), data.toString().trim());
-      });
-
-      webProcess.stderr?.on('data', (data) => {
-        console.log(pc.red('[WEB ERROR]'), data.toString().trim());
-      });
-
-      serverProcess.stderr?.on('data', (data) => {
-        console.log(pc.red('[API ERROR]'), data.toString().trim());
-      });
-    } else {
-      // 本番モード: ビルドしてからサーバー起動
-      console.log(pc.blue('🔨 Building webapp...'));
-
-      const buildProcess = spawn('npm', ['run', 'web:build'], {
-        cwd: 'webapp',
-        stdio: 'inherit',
-        shell: true,
-      });
-
-      await new Promise<void>((resolve, reject) => {
-        buildProcess.on('exit', (code) => {
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error('Web build failed'));
-          }
-        });
-      });
-
-      const serverProcess = spawn('npm', ['run', 'server:build'], {
-        stdio: 'pipe',
-        shell: true,
-      });
-
-      await new Promise<void>((resolve, reject) => {
-        serverProcess.on('exit', (code) => {
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error('Server build failed'));
-          }
-        });
-      });
-
-      const startProcess = spawn('node', ['dist/index.js'], {
-        stdio: 'pipe',
-        shell: true,
-        env: { ...process.env, PORT: this.port.toString() },
-      });
-
-      this.processes.push(startProcess);
-
-      startProcess.stdout?.on('data', (data) => {
-        console.log(pc.yellow('[API]'), data.toString().trim());
-      });
-
-      startProcess.stderr?.on('data', (data) => {
-        console.log(pc.red('[API ERROR]'), data.toString().trim());
-      });
-    }
+    child.once('exit', (code) => {
+      if (this.shuttingDown) {
+        return;
+      }
+      if (code === 0) {
+        console.log(pc.gray(`🔁 npm run ${script} exited cleanly`));
+      } else {
+        console.error(pc.red(`❌ npm run ${script} exited with code ${code}`));
+      }
+    });
   }
 
   private async waitForServer(): Promise<void> {
-    console.log(pc.blue('⏳ Waiting for server to start...'));
+    console.log(pc.blue('⏳ Waiting for HTTP /health...'));
 
-    const maxAttempts = 60; // 60秒
-    const baseUrl = `http://localhost:${this.port}`;
-
-    for (let i = 0; i < maxAttempts; i++) {
+    const maxAttempts = 60;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const response = await fetch(`${baseUrl}/health`);
+        const response = await fetch(`${this.baseUrl}/health`);
         if (response.ok) {
-          console.log(pc.green(`✅ Server OK on ${baseUrl}`));
+          console.log(pc.green(`✅ Server ready at ${this.baseUrl}`));
           return;
         }
       } catch {
-        // サーバーがまだ起動していない
+        // still booting
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await sleep(1000);
     }
 
-    throw new Error('Server failed to start within 60 seconds');
+    throw new Error('Server did not pass /health within 60 seconds');
   }
 
-  private async detectLanIp(): Promise<void> {
+  private detectLanIp(): void {
     console.log(pc.blue('🌐 Detecting LAN IP...'));
+    const detected = getLanIp();
+    this.lanIp = detected;
 
-    const lanIp = getLanIp();
-    if (lanIp) {
-      this.lanIp = lanIp.ip;
-      console.log(pc.green(`🌐 LAN IP: ${this.lanIp}`));
+    if (detected === 'localhost') {
+      console.log(pc.yellow('⚠️  No private LAN IP found, using localhost only'));
     } else {
-      console.log(pc.yellow('⚠️  No LAN IP detected, using localhost only'));
+      console.log(pc.green(`🌐 LAN accessible via http://${detected}:${this.port}`));
     }
   }
 
   private async createRoom(): Promise<{ roomId: string; joinToken: string }> {
-    console.log(pc.blue('🎟 Creating room...'));
-
-    const baseUrl = `http://localhost:${this.port}`;
-    const roomData = await createRoom(baseUrl);
-
-    console.log(pc.green(`✅ Room created: ${roomData.roomId}`));
-    return roomData;
+    console.log(pc.blue('🎟 Creating initial room...'));
+    const room = await createRoom(this.baseUrl);
+    console.log(pc.green(`✅ Room ready (${room.roomId})`));
+    return room;
   }
 
-  private printInviteUrls(roomData: { roomId: string; joinToken: string }): void {
-    const urls = generateInviteUrls(
-      roomData.roomId,
-      roomData.joinToken,
-      this.port,
-      this.lanIp || undefined,
-      this.tunnelResult?.url
-    );
+  private async setupTunnel(): Promise<void> {
+    if (this.options.skipTunnel) {
+      this.tunnelState = 'skipped';
+      console.log(pc.gray('🌐 Tunnel skipped (--skip-tunnel)'));
+      return;
+    }
 
-    printInviteUrls(urls);
-  }
+    if (!isCloudflaredInstalled()) {
+      this.tunnelState = 'not-installed';
+      console.log(pc.yellow('🌐 Tunnel: (not installed)'));
+      return;
+    }
 
-  private async tryStartTunnel(): Promise<void> {
     try {
-      this.tunnelResult = await startCloudflareTunnel(this.port);
-      if (this.tunnelResult) {
-        console.log(pc.green(`🌐 Tunnel: ${this.tunnelResult.url}`));
+      this.tunnelState = 'starting';
+      const result = await startCloudflareTunnel(this.port, { silent: true });
+      if (result?.url) {
+        this.tunnel = result;
+        this.tunnelState = 'ready';
+        console.log(pc.green(`🌐 Tunnel URL: ${result.url}`));
+      } else {
+        this.tunnelState = 'failed';
+        console.log(pc.yellow('⚠️  Tunnel did not provide a public URL (timed out)'));
       }
     } catch (error) {
-      console.log(pc.yellow('⚠️  Tunnel failed, continuing without...'));
+      this.tunnelState = 'failed';
+      console.log(pc.red(`❌ Failed to start tunnel: ${error}`));
     }
   }
 
-  private async runSmokeTest(roomData: { roomId: string; joinToken: string }): Promise<void> {
-    console.log(pc.blue('🧪 Running smoke test...'));
+  private async presentInviteUrls(room: { roomId: string; joinToken: string }): Promise<void> {
+    const lanForInvite = this.lanIp === 'localhost' ? undefined : this.lanIp;
+    const tunnelUrl = this.tunnel?.url;
+    const invites = generateInviteUrls(
+      room.roomId,
+      room.joinToken,
+      this.port,
+      lanForInvite,
+      tunnelUrl
+    );
+
+    console.log();
+    console.log(pc.cyan('🎟 Invite URLs'));
+    console.log(pc.gray(`- Localhost: ${invites.localhost}`));
+
+    if (invites.lan) {
+      console.log(pc.gray(`- LAN: ${invites.lan}`));
+    } else {
+      console.log(pc.gray('- LAN: (unavailable)'));
+    }
+
+    if (tunnelUrl) {
+      console.log(pc.gray(`- Tunnel: ${tunnelUrl}`));
+    } else {
+      const statusMessage =
+        this.tunnelState === 'not-installed'
+          ? '(not installed)'
+          : this.tunnelState === 'skipped'
+          ? '(skipped)'
+          : '(pending or failed)';
+      console.log(pc.gray(`- Tunnel: ${statusMessage}`));
+    }
+
+    console.log();
+    await this.copyInvite(invites.localhost, 'Localhost invite link');
+
+    if (invites.lan) {
+      await this.copyInvite(invites.lan, 'LAN invite link');
+    } else {
+      console.log(pc.gray('📋 Skipped LAN clipboard copy (unavailable)'));
+    }
+
+    if (tunnelUrl) {
+      await this.copyInvite(tunnelUrl, 'Tunnel invite link');
+    } else if (this.tunnelState === 'not-installed') {
+      console.log(pc.gray('📋 Skipped Tunnel clipboard copy (not installed)'));
+    } else if (this.tunnelState === 'skipped') {
+      console.log(pc.gray('📋 Skipped Tunnel clipboard copy (--skip-tunnel)'));
+    } else {
+      console.log(pc.gray('📋 Skipped Tunnel clipboard copy (URL unavailable)'));
+    }
+  }
+
+  private async copyInvite(url: string, label: string): Promise<void> {
+    await copyInviteUrl(url, label);
+  }
+
+  private async openBrowser(room: { roomId: string; joinToken: string }): Promise<void> {
+    console.log(pc.blue('🚀 Opening browser tabs...'));
+    const homeUrl = new URL('/', this.baseUrl).toString();
+    const joinUrl = new URL(`/join/${room.roomId}?t=${room.joinToken}`, this.baseUrl).toString();
+
+    try {
+      await Promise.all([
+        open(homeUrl, { wait: false }),
+        open(joinUrl, { wait: false }),
+      ]);
+      console.log(pc.green('🚀 Browser opened for Home and Join URLs'));
+    } catch (error) {
+      console.log(pc.yellow(`⚠️  Failed to open browser automatically: ${error}`));
+      console.log(pc.gray(`Home: ${homeUrl}`));
+      console.log(pc.gray(`Join: ${joinUrl}`));
+    }
+  }
+
+  private async runSmokeTest(room: { roomId: string; joinToken: string }): Promise<void> {
+    console.log(pc.blue('🧪 Running smoke test (JOIN → PLACE → MOVE)...'));
+
+    const wsUrl = new URL('/ws', this.baseUrl);
+    wsUrl.protocol = wsUrl.protocol.replace('http', 'ws');
 
     try {
       const result = await runSmokeTest({
-        roomId: roomData.roomId,
-        token: roomData.joinToken,
-        wsUrl: `ws://localhost:${this.port}/ws`,
+        roomId: room.roomId,
+        token: room.joinToken,
+        wsUrl: wsUrl.toString(),
+        timeout: 10000,
       });
 
       if (result.success) {
-        console.log(pc.green('🧪 Smoke: PASS (JOIN/MOVE)'));
+        console.log(pc.green('🧪 Smoke test PASS'));
       } else {
-        console.log(pc.red(`🧪 Smoke: FAIL - ${result.error}`));
+        console.log(pc.red(`🧪 Smoke test FAIL: ${result.error}`));
+        result.steps.forEach((step) => console.log(pc.gray(`  • ${step}`)));
       }
     } catch (error) {
-      console.log(pc.red(`🧪 Smoke: ERROR - ${error}`));
-    }
-  }
-
-  private async openBrowser(roomData: { roomId: string; joinToken: string }): Promise<void> {
-    console.log(pc.blue('🚀 Opening browser...'));
-
-    try {
-      const homeUrl = `http://localhost:${this.port}/`;
-      const joinUrl = `http://localhost:${this.port}/join/${roomData.roomId}?t=${roomData.joinToken}`;
-
-      await Promise.all([open(homeUrl), open(joinUrl)]);
-
-      console.log(pc.green('🚀 Opened your browser to Home and the Join URL.'));
-    } catch (error) {
-      console.log(pc.yellow('⚠️  Failed to open browser, URLs printed above'));
+      console.log(pc.red(`🧪 Smoke test error: ${error}`));
     }
   }
 
   private setupSignalHandlers(): void {
-    const cleanup = async () => {
+    const shutdown = async () => {
+      if (this.shuttingDown) return;
+      this.shuttingDown = true;
       console.log(pc.yellow('\n🛑 Shutting down...'));
       await this.cleanup();
       process.exit(0);
     };
 
-    process.on('SIGINT', cleanup);
-    process.on('SIGTERM', cleanup);
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
   }
 
   private async cleanup(): Promise<void> {
-    // プロセスを終了
-    for (const process of this.processes) {
-      killProcess(process);
+    for (const child of this.processes) {
+      killProcess(child);
     }
+    this.processes = [];
 
-    // トンネルを終了
-    if (this.tunnelResult) {
-      killProcess(this.tunnelResult.process);
+    if (this.tunnel) {
+      this.tunnel.stop();
+      this.tunnel = null;
     }
   }
 }
 
-/**
- * CLI用のメイン関数
- */
-async function main() {
+function loadEnvFile(filePath = '.env'): void {
+  const absPath = resolve(process.cwd(), filePath);
+  if (!existsSync(absPath)) {
+    return;
+  }
+
+  const content = readFileSync(absPath, 'utf-8');
+  const lines = content.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    const match = trimmed.match(/^([\w.-]+)\s*=\s*(.*)$/);
+    if (!match) continue;
+
+    const [, key, rawValue] = match;
+    const value = unquote(rawValue);
+
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+function unquote(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).replace(/\\n/g, '\n').replace(/\\r/g, '\r');
+  }
+
+  return trimmed;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
   const options: DevOptions = {
@@ -326,7 +386,6 @@ async function main() {
     skipBrowser: args.includes('--skip-browser'),
   };
 
-  // ポート指定
   const portIndex = args.indexOf('--port');
   if (portIndex !== -1 && args[portIndex + 1]) {
     options.port = parseInt(args[portIndex + 1], 10);
@@ -336,7 +395,6 @@ async function main() {
   await orchestrator.start();
 }
 
-// CLI実行時のみmainを呼び出す
 if (require.main === module) {
   main().catch((error) => {
     console.error(pc.red('❌ Development orchestrator error:'), error);

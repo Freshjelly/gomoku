@@ -7,8 +7,10 @@ import { ClientMessage, ServerMessage, CreateRoomResponse, ErrorCode, PlayerColo
 import { TokenManager, TokenInfo } from './token';
 import { Room } from './room';
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) || 3000 : 3000;
 const HOST = process.env.HOST || '0.0.0.0';
+const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
+const WEBSOCKET_PATH = '/ws';
 
 // ルーム管理
 const rooms = new Map<string, Room>();
@@ -20,7 +22,7 @@ const rateLimits = new Map<string, { count: number; resetTime: number }>();
 // Fastifyアプリケーション作成
 const fastify = Fastify({
   logger: {
-    level: 'info',
+    level: LOG_LEVEL,
   },
 });
 
@@ -37,7 +39,11 @@ fastify.register(fastifyStatic, {
 fastify.post('/api/rooms', async (request, reply) => {
   const roomId = TokenManager.generateRoomId();
   const joinToken = TokenManager.generateJoinToken();
-  const wsUrl = `ws://${request.headers.host}/ws`;
+
+  const scheme = resolveForwardedProto(request.headers);
+  const host = resolveForwardedHost(request.headers, `${HOST}:${PORT}`);
+  const wsProtocol = scheme === 'https' ? 'wss' : 'ws';
+  const wsUrl = `${wsProtocol}://${host}${WEBSOCKET_PATH}`;
 
   // ルーム作成
   const room = new Room(roomId);
@@ -65,6 +71,19 @@ fastify.get('/health', async (request, reply) => {
   reply.send('ok');
 });
 
+// 診断情報
+fastify.get('/diag', async () => ({
+  status: 'ok',
+  port: PORT,
+  host: HOST,
+  websocketPath: WEBSOCKET_PATH,
+  tokenTtlMinutes: TokenManager.tokenTtlMinutes,
+  basePath: '/',
+  logLevel: LOG_LEVEL,
+  roomsOnline: rooms.size,
+  uptimeSeconds: Math.round(process.uptime()),
+}));
+
 // SPA fallback - 全ての未定義のGETリクエストにindex.htmlを返す
 fastify.setNotFoundHandler((request, reply) => {
   // API routes should return 404 JSON
@@ -74,7 +93,7 @@ fastify.setNotFoundHandler((request, reply) => {
   }
 
   // WebSocket routes should not fallback
-  if (request.url.startsWith('/ws')) {
+  if (request.url.startsWith(WEBSOCKET_PATH)) {
     reply.code(404).send({ error: 'Not Found' });
     return;
   }
@@ -85,7 +104,7 @@ fastify.setNotFoundHandler((request, reply) => {
 
 // WebSocket接続
 fastify.register(async function (fastify) {
-  fastify.get('/ws', { websocket: true }, (connection, req) => {
+  fastify.get(WEBSOCKET_PATH, { websocket: true }, (connection, req) => {
     const sessionId = randomUUID();
     let currentRoom: Room | null = null;
     let playerColor: PlayerColor | null = null;
@@ -328,6 +347,63 @@ fastify.register(async function (fastify) {
     });
   });
 });
+
+function resolveForwardedProto(headers: Record<string, unknown>): 'http' | 'https' {
+  const proto = headers['x-forwarded-proto'];
+
+  const pickString = (value: unknown): string | undefined => {
+    if (typeof value === 'string') {
+      return value.split(',')[0].trim();
+    }
+    if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'string') {
+      return value[0];
+    }
+    return undefined;
+  };
+
+  const directProto = pickString(proto);
+  if (directProto) {
+    return directProto.toLowerCase() === 'https' ? 'https' : 'http';
+  }
+
+  const cfVisitor = headers['cf-visitor'];
+  if (typeof cfVisitor === 'string') {
+    try {
+      const parsed = JSON.parse(cfVisitor);
+      if (parsed && typeof parsed.scheme === 'string') {
+        return parsed.scheme === 'https' ? 'https' : 'http';
+      }
+    } catch {
+      // ignore malformed JSON
+    }
+  }
+
+  return 'http';
+}
+
+function resolveForwardedHost(headers: Record<string, unknown>, fallback: string): string {
+  const pickString = (value: unknown): string | undefined => {
+    if (typeof value === 'string') {
+      return value.split(',')[0].trim();
+    }
+    if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'string') {
+      return value[0];
+    }
+    return undefined;
+  };
+
+  const forwardedHost = pickString(headers['x-forwarded-host']);
+  if (forwardedHost && forwardedHost.length > 0) {
+    return forwardedHost;
+  }
+
+  const host = pickString(headers['host']);
+  if (host && host.length > 0) {
+    return host;
+  }
+
+  return fallback;
+}
 
 // サーバー起動
 const start = async () => {

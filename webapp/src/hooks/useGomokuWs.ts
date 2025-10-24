@@ -41,14 +41,14 @@ export function useGomokuWs() {
         wsRef.current.close();
       }
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      const wsUrl = new URL('/ws', window.location.href);
+      wsUrl.protocol = wsUrl.protocol.replace('http', 'ws');
 
       setConnectionStatus('connecting');
       setError(null);
 
       try {
-        wsRef.current = new WebSocket(wsUrl);
+        wsRef.current = new WebSocket(wsUrl.toString());
 
         wsRef.current.onopen = () => {
           console.log('WebSocket connected');

@@ -61,14 +61,14 @@ function printInviteUrls(urls) {
 /**
  * クリップボードに招待URLをコピーする
  */
-async function copyInviteUrl(url) {
+async function copyInviteUrl(url, label = 'Invite link') {
     try {
         await (0, clipboard_1.copyToClipboard)(url);
-        console.log(picocolors_1.default.green('🔓 Invite link copied to clipboard'));
+        console.log(picocolors_1.default.green(`🔓 ${label} copied to clipboard`));
         return true;
     }
     catch (error) {
-        console.log(picocolors_1.default.yellow('⚠️  Failed to copy to clipboard, URL printed above'));
+        console.log(picocolors_1.default.yellow(`⚠️  Failed to copy ${label} to clipboard, URL printed above`));
         return false;
     }
 }
@@ -103,7 +103,7 @@ async function main() {
         const urls = generateInviteUrls(roomData.roomId, roomData.joinToken, port, lanIp);
         printInviteUrls(urls);
         // ローカルホストのURLをクリップボードにコピー
-        await copyInviteUrl(urls.localhost);
+        await copyInviteUrl(urls.localhost, 'Localhost invite link');
     }
     catch (error) {
         console.error(picocolors_1.default.red('❌ Failed to create room:'), error);

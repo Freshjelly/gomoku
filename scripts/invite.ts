@@ -74,13 +74,13 @@ export function printInviteUrls(urls: ReturnType<typeof generateInviteUrls>) {
 /**
  * クリップボードに招待URLをコピーする
  */
-export async function copyInviteUrl(url: string): Promise<boolean> {
+export async function copyInviteUrl(url: string, label = 'Invite link'): Promise<boolean> {
   try {
     await copyToClipboard(url);
-    console.log(pc.green('🔓 Invite link copied to clipboard'));
+    console.log(pc.green(`🔓 ${label} copied to clipboard`));
     return true;
   } catch (error) {
-    console.log(pc.yellow('⚠️  Failed to copy to clipboard, URL printed above'));
+    console.log(pc.yellow(`⚠️  Failed to copy ${label} to clipboard, URL printed above`));
     return false;
   }
 }
@@ -122,7 +122,7 @@ async function main() {
     printInviteUrls(urls);
 
     // ローカルホストのURLをクリップボードにコピー
-    await copyInviteUrl(urls.localhost);
+    await copyInviteUrl(urls.localhost, 'Localhost invite link');
   } catch (error) {
     console.error(pc.red('❌ Failed to create room:'), error);
     process.exit(1);
