@@ -1,14 +1,17 @@
 import { PlayerColor, GameResult } from './types';
+import * as Gomoku from './engine/gomoku';
+import { GameRules, DEFAULT_RULES } from './engine/rules';
 
 // 盤面クラス
 export class Board {
-  private readonly size = 15;
-  private board: number[][];
+  private readonly size: number;
+  private board: Gomoku.Board;
+  private readonly rules: GameRules;
 
-  constructor() {
-    this.board = Array(this.size)
-      .fill(null)
-      .map(() => Array(this.size).fill(0));
+  constructor(rules: GameRules = DEFAULT_RULES) {
+    this.rules = rules;
+    this.size = rules.boardSize;
+    this.board = Gomoku.initBoard(this.size);
   }
 
   // 石を配置
@@ -16,19 +19,14 @@ export class Board {
     if (!this.isValidMove(x, y)) {
       return false;
     }
-    this.board[y][x] = color === 'black' ? 1 : 2;
+    const colorNum = color === 'black' ? 1 : 2;
+    this.board = Gomoku.applyMove(this.board, { x, y }, colorNum as 1 | 2);
     return true;
   }
 
   // 有効な手かチェック
   isValidMove(x: number, y: number): boolean {
-    return (
-      x >= 0 &&
-      x < this.size &&
-      y >= 0 &&
-      y < this.size &&
-      this.board[y][x] === 0
-    );
+    return Gomoku.isValidMove(this.board, x, y);
   }
 
   // 盤面取得
@@ -38,61 +36,18 @@ export class Board {
 
   // 指定位置の石を取得
   getStone(x: number, y: number): number {
-    if (x < 0 || x >= this.size || y < 0 || y >= this.size) {
-      return -1;
-    }
-    return this.board[y][x];
+    return Gomoku.getStone(this.board, x, y);
   }
 
-  // 勝敗判定
+  // 勝敗判定（エンジンを使用）
   checkWin(x: number, y: number, color: PlayerColor): Array<[number, number]> | null {
-    const stoneValue = color === 'black' ? 1 : 2;
-    const directions = [
-      [1, 0],   // 横
-      [0, 1],   // 縦
-      [1, 1],   // 斜め（右下）
-      [1, -1],  // 斜め（右上）
-    ];
-
-    for (const [dx, dy] of directions) {
-      const line = this.checkLine(x, y, dx, dy, stoneValue);
-      if (line && line.length >= 5) {
-        return line.slice(0, 5); // 5連を返す
-      }
-    }
-
-    return null;
+    const colorNum = color === 'black' ? 1 : 2;
+    return Gomoku.checkWin(this.board, { x, y }, colorNum as 1 | 2, this.rules.winCondition);
   }
 
-  // 指定方向の連続石をチェック
-  private checkLine(
-    startX: number,
-    startY: number,
-    dx: number,
-    dy: number,
-    stoneValue: number
-  ): Array<[number, number]> | null {
-    const line: Array<[number, number]> = [];
-    
-    // 指定方向に連続する石をチェック
-    for (let i = -4; i <= 4; i++) {
-      const x = startX + i * dx;
-      const y = startY + i * dy;
-      
-      if (this.getStone(x, y) === stoneValue) {
-        line.push([x, y]);
-      } else {
-        // 連続が途切れた場合、5連以上なら返す
-        if (line.length >= 5) {
-          return line;
-        }
-        // 連続をリセット
-        line.length = 0;
-      }
-    }
-
-    // 最後まで連続していた場合
-    return line.length >= 5 ? line : null;
+  // 引き分け判定（盤面が満杯か）
+  isDraw(): boolean {
+    return Gomoku.isDraw(this.board);
   }
 }
 
@@ -106,6 +61,7 @@ export class Room {
   private gameEnded: boolean;
   private winner: PlayerColor | null;
   private winLine: Array<[number, number]> | null;
+  private queueTail: Promise<unknown>;
 
   constructor(roomId: string) {
     this.roomId = roomId;
@@ -116,6 +72,7 @@ export class Room {
     this.gameEnded = false;
     this.winner = null;
     this.winLine = null;
+    this.queueTail = Promise.resolve();
   }
 
   // プレイヤー参加
@@ -123,7 +80,14 @@ export class Room {
     // 既に同じ色のプレイヤーがいる場合は置き換え
     if (this.players.has(color)) {
       const oldSessionId = this.players.get(color)!;
+      const oldConn = this.connections.get(oldSessionId);
       this.connections.delete(oldSessionId);
+      // 旧接続を明示的に切断（新しい接続を優先）
+      try {
+        if (oldConn && oldConn.socket && oldConn.socket.readyState === 1) {
+          oldConn.socket.close(4001, 'superseded');
+        }
+      } catch {}
     }
 
     this.players.set(color, sessionId);
@@ -182,6 +146,18 @@ export class Room {
         end: {
           result: currentPlayerColor === 'black' ? 'black_win' : 'white_win',
           line: winLine,
+        },
+      };
+    }
+
+    // 引き分け判定（盤面が満杯）
+    if (this.board.isDraw()) {
+      this.gameEnded = true;
+      this.winner = null;
+      return {
+        success: true,
+        end: {
+          result: 'draw',
         },
       };
     }
@@ -259,6 +235,33 @@ export class Room {
     };
   }
 
+  // 現在の接続一覧（読み取り専用）
+  getConnections(): Map<string, any> {
+    return this.connections;
+  }
+
+  // ルーム内操作を直列化するキュー
+  async enqueue<T>(fn: () => T | Promise<T>): Promise<T> {
+    // 直前の処理が終わった後に実行
+    let resolveNext: (value: unknown) => void;
+    const next = new Promise((r) => (resolveNext = r));
+    const prev = this.queueTail;
+    this.queueTail = next;
+
+    await prev.catch(() => {});
+    try {
+      const result = await fn();
+      // 次の処理を解放
+      // @ts-ignore - resolveNext is always set
+      resolveNext(null);
+      return result;
+    } catch (e) {
+      // @ts-ignore - resolveNext is always set
+      resolveNext(null);
+      throw e;
+    }
+  }
+
   // ルームが空かチェック
   isEmpty(): boolean {
     return this.players.size === 0;
@@ -272,5 +275,14 @@ export class Room {
   // 接続数
   getConnectionCount(): number {
     return this.connections.size;
+  }
+
+  // 新規ゲーム開始（盤面リセット）
+  startNewGame(): void {
+    this.board = new Board();
+    this.turn = 'black';
+    this.gameEnded = false;
+    this.winner = null;
+    this.winLine = null;
   }
 }

@@ -7,6 +7,7 @@ import { Board } from '../components/Board';
 import { StatusBar } from '../components/StatusBar';
 import { ResultModal } from '../components/ResultModal';
 import { WaitingCard } from '../components/WaitingCard';
+import { MobileActionsBar } from '../components/MobileActionsBar';
 import { useToast } from '../hooks/useToast';
 
 export default function Join() {
@@ -15,7 +16,7 @@ export default function Join() {
   const navigate = useNavigate();
   const token = searchParams.get('t');
 
-  const { connect, disconnect, error } = useGomokuWs();
+  const { connect, disconnect, error, resign } = useGomokuWs();
   const { connectionStatus, playerColor, players, gameEnded, resetGame } = useGameStore();
   const { showToast } = useToast();
 
@@ -65,7 +66,7 @@ export default function Join() {
     <div className="min-h-screen bg-bg-primary">
       <Header />
 
-      <main className="container mx-auto px-4 py-4 max-w-4xl">
+      <main className="container mx-auto px-4 pb-20 pt-4 max-w-4xl">
         <div className="space-y-4">
           {/* Status Bar */}
           <StatusBar />
@@ -103,7 +104,7 @@ export default function Join() {
                     <button
                       onClick={() => {
                         if (confirm('本当に投了しますか？')) {
-                          // Resign logic will be handled by Board component
+                          resign();
                         }
                       }}
                       className="btn-danger w-full"
@@ -133,6 +134,11 @@ export default function Join() {
 
       {/* Result Modal */}
       {gameEnded && <ResultModal />}
+
+      {/* Mobile one-hand bar */}
+      {isGameReady && roomId && token && (
+        <MobileActionsBar roomId={roomId} token={token} onResign={() => resign()} />)
+      }
     </div>
   );
 }

@@ -1,7 +1,7 @@
 // WebSocketメッセージ型定義
 
 export type PlayerColor = 'black' | 'white';
-export type GameResult = 'black_win' | 'white_win' | 'resign' | 'opponent_left';
+export type GameResult = 'black_win' | 'white_win' | 'draw' | 'resign' | 'opponent_left';
 
 // Client -> Server メッセージ
 export interface JoinMessage {
@@ -20,7 +20,11 @@ export interface ResignMessage {
   type: 'RESIGN';
 }
 
-export type ClientMessage = JoinMessage | PlaceMessage | ResignMessage;
+export interface NewGameMessage {
+  type: 'NEW_GAME';
+}
+
+export type ClientMessage = JoinMessage | PlaceMessage | ResignMessage | NewGameMessage | PingMessage | PongMessage;
 
 // Server -> Client メッセージ
 export interface StateMessage {
@@ -32,6 +36,7 @@ export interface StateMessage {
     blackConnected: boolean;
     whiteConnected: boolean;
   };
+  roomId?: string;
 }
 
 export interface MoveMessage {
@@ -80,6 +85,7 @@ export interface CreateRoomResponse {
 // エラーコード
 export enum ErrorCode {
   INVALID_TOKEN = 'INVALID_TOKEN',
+  TOKEN_EXPIRED = 'TOKEN_EXPIRED',
   ROOM_NOT_FOUND = 'ROOM_NOT_FOUND',
   ROOM_FULL = 'ROOM_FULL',
   INVALID_MOVE = 'INVALID_MOVE',

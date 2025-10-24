@@ -15,9 +15,6 @@ export async function createRoom(baseUrl = 'http://localhost:3000'): Promise<Cre
   try {
     const response = await fetch(`${baseUrl}/api/rooms`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
     });
 
     if (!response.ok) {

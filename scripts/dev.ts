@@ -193,11 +193,17 @@ class DevOrchestrator {
 
     try {
       this.tunnelState = 'starting';
-      const result = await startCloudflareTunnel(this.port, { silent: true });
+      // Try QUIC first, then http2 as fallback
+      let result = await startCloudflareTunnel(this.port, { silent: true, protocol: 'quic', timeoutMs: 30000 });
+      if (!result?.url) {
+        console.log(pc.yellow('⚠️  QUIC tunnel did not provide URL, falling back to http2...'));
+        result = await startCloudflareTunnel(this.port, { silent: true, protocol: 'http2', timeoutMs: 60000 });
+      }
       if (result?.url) {
         this.tunnel = result;
         this.tunnelState = 'ready';
         console.log(pc.green(`🌐 Tunnel URL: ${result.url}`));
+        await this.verifyTunnelHealth(result.url);
       } else {
         this.tunnelState = 'failed';
         console.log(pc.yellow('⚠️  Tunnel did not provide a public URL (timed out)'));
@@ -205,6 +211,33 @@ class DevOrchestrator {
     } catch (error) {
       this.tunnelState = 'failed';
       console.log(pc.red(`❌ Failed to start tunnel: ${error}`));
+    }
+  }
+
+  private async verifyTunnelHealth(tunnelBase: string): Promise<void> {
+    const url = new URL('/health', tunnelBase).toString();
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        console.log(pc.green('🌐 Tunnel /health reachable'));
+      } else {
+        const body = await res.text().catch(() => '');
+        const info = body ? `${res.status} ${res.statusText} - ${body.slice(0, 120)}` : `${res.status} ${res.statusText}`;
+        if (res.status === 502) {
+          console.log(pc.yellow(`⚠️  Tunnel reached but origin returned 502 Bad Gateway (origin unreachable): ${info}`));
+        } else {
+          console.log(pc.yellow(`⚠️  Tunnel /health returned non-200: ${info}`));
+        }
+      }
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      if (/ENOTFOUND|getaddrinfo/i.test(msg)) {
+        console.log(pc.yellow('⚠️  Tunnel DNS resolution issue (ENOTFOUND). Continuing without validation.'));
+      } else if (/CERT|TLS|self[- ]signed/i.test(msg)) {
+        console.log(pc.yellow('⚠️  TLS/Certificate issue while reaching Tunnel. Continuing.'));
+      } else {
+        console.log(pc.yellow(`⚠️  Failed to fetch Tunnel /health: ${msg}`));
+      }
     }
   }
 
@@ -286,25 +319,39 @@ class DevOrchestrator {
   private async runSmokeTest(room: { roomId: string; joinToken: string }): Promise<void> {
     console.log(pc.blue('🧪 Running smoke test (JOIN → PLACE → MOVE)...'));
 
-    const wsUrl = new URL('/ws', this.baseUrl);
-    wsUrl.protocol = wsUrl.protocol.replace('http', 'ws');
+    // Local (127.0.0.1) to avoid IPv6/localhost issues
+    const localWsUrl = `ws://127.0.0.1:${this.port}/ws`;
+    await this.execOneSmoke('Local', localWsUrl, room);
 
+    // Tunnel as wss if available
+    if (this.tunnel?.url) {
+      const t = new URL(this.tunnel.url);
+      t.pathname = '/ws';
+      t.protocol = t.protocol.replace('http', 'ws');
+      const tunnelWs = t.toString();
+      await this.execOneSmoke('Tunnel', tunnelWs, room);
+    } else {
+      console.log(pc.gray('🧪 Tunnel smoke skipped (no URL)'));
+    }
+  }
+
+  private async execOneSmoke(label: string, wsUrl: string, room: { roomId: string; joinToken: string }) {
+    process.stdout.write(pc.blue(`   • ${label} → ${wsUrl}\n`));
     try {
       const result = await runSmokeTest({
         roomId: room.roomId,
         token: room.joinToken,
-        wsUrl: wsUrl.toString(),
+        wsUrl,
         timeout: 10000,
       });
-
       if (result.success) {
-        console.log(pc.green('🧪 Smoke test PASS'));
+        console.log(pc.green(`     ✔ ${label} smoke PASS`));
       } else {
-        console.log(pc.red(`🧪 Smoke test FAIL: ${result.error}`));
-        result.steps.forEach((step) => console.log(pc.gray(`  • ${step}`)));
+        console.log(pc.red(`     ✘ ${label} smoke FAIL: ${result.error}`));
+        result.steps.forEach((s) => console.log(pc.gray(`       - ${s}`)));
       }
-    } catch (error) {
-      console.log(pc.red(`🧪 Smoke test error: ${error}`));
+    } catch (e: any) {
+      console.log(pc.red(`     ✘ ${label} smoke error: ${e?.message || e}`));
     }
   }
 

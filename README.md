@@ -1,174 +1,193 @@
-# 五目並べオンライン
+# 🎮 五目並べオンライン
 
-リアルタイム WebSocket 通信で 1 対 1 の五目並べ対戦を楽しめる Node.js + React プロジェクトです。  
-`npm run go` を実行すると、Web（Vite）・API（Fastify）・Cloudflare Tunnel（任意）・ブラウザ・WebSocket スモークテストまでを自動で起動してくれます。
+オンラインで対戦できる五目並べゲーム。Cloudflare Tunnelで外部公開可能。
 
----
+## ✨ 機能
 
-## ステップ順ガイド
+- 🌐 **オンライン対戦**: Cloudflare Tunnelで外部公開（HTTPS/WSS）
+- 📱 **モバイル対応**: スマホ・タブレット対応のレスポンシブUI
+- 🌙 **ダークモード**: ライト/ダークテーマの切り替え
+- 🎯 **本格碁盤**: SVG描画による線の交点への配置
+- 🔄 **リプレイ機能**: 同じ部屋で何度でも対戦可能
+- ⚡ **リアルタイム同期**: WebSocketによる瞬時の盤面更新
 
-### 1. リポジトリを取得する
+## 🎯 ゲームルール
+
+- **盤面**: 15×15
+- **勝利条件**: 縦・横・斜めのいずれかに5つ以上連続
+- **先手**: 黒石
+- **後手**: 白石
+- **投了**: いつでも投了可能
+
+## 🚀 クイックスタート
+
+### 必要なもの
+
+- Node.js 20以上
+- npm
+
+### インストールと起動
 
 ```bash
+# リポジトリのクローン
 git clone <repository-url>
 cd gomoku
-```
 
-### 2. 依存関係をインストールする
-
-```bash
+# 依存関係のインストール
 npm install
-```
 
-> ルートだけでなく `webapp/` の依存も自動で入ります。
-
-### 3. 環境変数ファイルを用意する
-
-```bash
-cp .env.example .env
-```
-
-必要に応じて以下の値を編集します（説明は後述）。
-
-```dotenv
-PORT=3000
-LOG_LEVEL=info
-TOKEN_TTL_MIN=10
-```
-
-### 4. （任意）Cloudflare Tunnel を準備する
-
-`npm run go` は `cloudflared` が PATH にある場合のみトンネルを自動起動します。導入したい OS の行を実行してください。
-
-```
-Windows: choco install cloudflared
-macOS:   brew install cloudflare/cloudflare/cloudflared
-Linux:   sudo apt-get install cloudflared
-```
-
-> インストールしなくてもローカル / LAN 対戦は問題なく動作します。
-
-### 5. ワンコマンドで起動する
-
-```bash
+# 開発サーバー起動（自動的にCloudflare Tunnel起動）
 npm run go
 ```
 
-以下の処理が順番に実行されます。
-
-1. 依存チェック（未インストールなら自動 `npm install`）
-2. `.env` ロード & 使用可能なポート確定
-3. `npm run start:pair`（開発モード）または `start:prod`（本番モード）起動
-4. `GET /health` をポーリングし Fastify の起動を待機
-5. LAN IP を 10.x → 172.16-31.x → 192.168.x の順に検索（見つからなくても継続）
-6. `POST /api/rooms` で `{ roomId, joinToken }` を取得
-7. `cloudflared` があればトンネル起動し `https://xxxxx.trycloudflare.com` を取得（未導入なら `(not installed)` 表示）
-8. Localhost / LAN / Tunnel の招待 URL を表示し、利用可能なものから順にクリップボードへコピー
-9. 既定ブラウザで Home（トップ）と Join（localhost 招待 URL）を自動オープン
-10. `scripts/smoke-ws.ts` で JOIN → PLACE → MOVE のスモークテスト（タイムアウト 10 秒）
-11. Ctrl+C で全プロセスとトンネルを安全に終了
-
-起動ログ例:
+起動すると以下が表示されます：
 
 ```
-📦 Checking dependencies...
-🔄 Starting npm run start:pair...
-⏳ Waiting for HTTP /health...
-✅ Server ready at http://localhost:3000
-🌐 LAN accessible via http://192.168.0.42:3000
-🌐 Tunnel URL: https://alpha.trycloudflare.com
+✅ Room ready (ABC12345)
+
 🎟 Invite URLs
-- Localhost: http://localhost:3000/join/ABCD1234?t=efgh5678
-- LAN: http://192.168.0.42:3000/join/ABCD1234?t=efgh5678
-- Tunnel: https://alpha.trycloudflare.com/join/ABCD1234?t=efgh5678
-🔓 Tunnel invite link copied to clipboard
+- Localhost: http://localhost:3005/join/ABC12345?t=...
+- LAN: http://192.168.1.100:3005/join/ABC12345?t=...
+- Tunnel: https://xxx.trycloudflare.com
+
 🚀 Browser opened for Home and Join URLs
-🧪 Smoke test PASS
-🎉 Environment ready — press Ctrl+C to stop
 ```
 
----
+### 対戦方法
 
-## 招待 URL の使い分け
+1. **ホスト**: `Tunnel` URLをコピー
+2. **ゲスト**: URLをブラウザで開く
+3. **両者**: 自動的にマッチング、黒石から開始
 
-| 種別 | 例 | 主な用途 |
-| --- | --- | --- |
-| Localhost | `http://localhost:3000/join/<roomId>?t=<token>` | 同一マシンで動作確認 |
-| LAN | `http://192.168.0.10:3000/join/<roomId>?t=<token>` | 同一ネットワーク内の別端末と対戦 |
-| Tunnel | `https://xxxxx.trycloudflare.com/join/<roomId>?t=<token>` | Cloudflare Tunnel を使ってインターネット経由で対戦 |
-
-`npm run go` 実行時に利用可能なリンクから順番にクリップボードへコピーされます（最後にコピーされた URL がクリップボードに残ります）。
-
----
-
-## よく使う npm スクリプト
-
-| コマンド | 内容 |
-| --- | --- |
-| `npm run go` | 開発フローを丸ごと自動化（上記参照） |
-| `npm run start:pair` | `npm:web:dev`（Vite）と `npm:server:dev`（Fastify）を同時起動 |
-| `npm run start:prod` | Vite ビルド → `node dist/server/index.js` で本番挙動を確認 |
-| `npm run web:dev` | `webapp/` ディレクトリで Vite 開発サーバー（`--host` 付き） |
-| `npm run server:dev` | `tsx server/index.ts` をホットリロード無しで実行 |
-| `npm run tunnel` | `cloudflared tunnel --url http://localhost:<port>` を実行（URL を取得） |
-| `npm run smoke` | WebSocket スモークテストのみ実施（JOIN → PLACE → MOVE） |
-
-開発・テストコマンド:
+## 📦 スクリプト
 
 ```bash
-npm run dev       # サーバーと Vite を手動で分けて起動したい場合
-npm run build     # TypeScript + Vite を一括ビルド
-npm run lint
-npm run lint:fix
-npm run format
+# 開発モード（トンネル付き）
+npm run go
+
+# ビルド
+npm run build            # サーバー + Webapp
+npm run server:build     # サーバーのみ
+npm run web:build        # Webappのみ
+
+# テスト
+npm test                 # 全テスト実行
+npm run test:watch       # ウォッチモード
+```
+
+## 🏗️ プロジェクト構成
+
+```
+.
+├── server/              # Fastify WebSocketサーバー
+│   ├── index.ts        # メインサーバー
+│   ├── room.ts         # ゲームルーム管理
+│   ├── types.ts        # 型定義
+│   └── engine/         # 五目並べエンジン
+├── webapp/              # React + Vite フロントエンド
+│   └── src/
+│       ├── components/ # UIコンポーネント
+│       ├── hooks/      # カスタムフック
+│       ├── store/      # Zustand状態管理
+│       └── pages/      # ページコンポーネント
+├── scripts/             # ユーティリティスクリプト
+└── test/                # テストファイル
+```
+
+## 🔧 設定
+
+### 環境変数（`.env`）
+
+```env
+PORT=3000                # サーバーポート
+```
+
+### Cloudflare Tunnel
+
+`cloudflared`がインストールされていれば自動的にHTTPSトンネルを起動します。
+
+```bash
+# cloudflaredのインストール（Ubuntu/Debian）
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+sudo dpkg -i cloudflared.deb
+```
+
+## 🎨 UI機能
+
+- **石の配置**: クリック/タップで石を配置
+- **ホバープレビュー**: マウスを乗せると配置予定の石を表示
+- **勝利演出**: 5連の石がハイライト表示
+- **ダークモード**: ヘッダーのボタンで切り替え
+- **キーボード操作**: 矢印キー + Enter で石を配置
+
+## 🧪 テスト
+
+```bash
+# 全テスト
 npm test
+
+# カバレッジ
+npm run test:coverage
+
+# 特定のテスト
+npm test -- room.test.ts
 ```
 
----
+## 📝 技術スタック
 
-## API とヘルスチェック
+### バックエンド
+- **Fastify**: 高速Webフレームワーク
+- **@fastify/websocket**: WebSocket対応
+- **@fastify/static**: 静的ファイル配信
+- **TypeScript**: 型安全性
 
-- `GET /health` → 文字列 `"ok"` を返却
-- `GET /diag` → ポート・ホスト・トークン TTL・ログレベル・ルーム数などの診断情報を JSON で返却
-- `POST /api/rooms` → `{ roomId, joinToken, wsUrl }` を返却（HTTPS 経由なら `wss://` URL）
-- `GET /ws` → ゲーム用 WebSocket エンドポイント
+### フロントエンド
+- **React 18**: UIライブラリ
+- **Vite**: 高速ビルドツール
+- **Zustand**: 状態管理
+- **Tailwind CSS**: スタイリング
+- **React Router**: ルーティング
 
----
+### インフラ
+- **Cloudflare Tunnel**: HTTPS外部公開
+- **WebSocket**: リアルタイム通信
 
-## 環境変数まとめ
+## 🐛 トラブルシューティング
 
-| 変数 | デフォルト値 | 説明 |
-| --- | --- | --- |
-| `PORT` | `3000` | Fastify のリスニングポート（使用中なら次の空きポートを自動探索） |
-| `LOG_LEVEL` | `info` | Fastify のログレベル |
-| `TOKEN_TTL_MIN` | `10` | 招待トークン有効期限（分）。`/diag` にも反映されます |
+### ポート競合
 
-`.env.example` → `.env` で必要な値を設定してください。
-
----
-
-## プロジェクト構成
-
-```
-/
-├── server/                  Fastify サーバー（API / WebSocket）
-├── webapp/                  React + Vite クライアント
-├── scripts/                 DevOps/CLI ツール（dev, tunnel, smoke など）
-├── dist/                    ビルド成果物（tsc / vite）
-├── .env.example             環境変数サンプル
-└── package.json
+```bash
+# ポート3000が使用中の場合、自動的に次の空きポートを使用
+⚠️  Port 3000 is busy, using next available port 3005
 ```
 
----
+### トンネル接続失敗
 
-## トラブルシューティング
+```bash
+# cloudflaredがインストールされていない場合
+🌐 Tunnel: (not installed)
+```
 
-- `cloudflared` 未導入 → `npm run go` のトンネル行が `(not installed)` と表示されるだけで、ローカル / LAN 招待は利用可能
-- Mixed Content 警告 → HTTPS 配信時でもクライアント側が `ws://`→`wss://` に自動変換するので発生しません（キャッシュが残る場合はブラウザをリロード）
-- スモークテスト失敗 → `npm run smoke -- --room <id> --token <token> --ws <ws-url>` で手動実行し、ログを確認
+→ ローカルとLANアドレスは動作します
 
----
+### Node.jsバージョン
 
-## ライセンス
+Node.js 20以上を推奨。nvmでの管理を推奨：
+
+```bash
+# nvmのインストール
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source ~/.nvm/nvm.sh
+
+# Node 20のインストール
+nvm install 20
+nvm use 20
+```
+
+## 📄 ライセンス
 
 MIT License
+
+## 🤝 コントリビューション
+
+プルリクエスト歓迎！バグ報告や機能要望はIssuesへ。

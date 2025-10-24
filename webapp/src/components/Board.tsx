@@ -4,6 +4,7 @@ import { useGomokuWs } from '../hooks/useGomokuWs';
 import { Stone } from './Stone';
 import { useToast } from '../hooks/useToast';
 import { clsx } from 'clsx';
+import { canClick } from '../lib/throttle';
 
 export function Board() {
   const { board, playerColor, currentTurn, winLine, soundEnabled } = useGameStore();
@@ -20,11 +21,8 @@ export function Board() {
   const handleCellClick = useCallback(
     (x: number, y: number) => {
       const now = Date.now();
-
-      // Rate limiting: prevent rapid clicks
-      if (now - lastClickTime.current < 250) {
-        return;
-      }
+      // Rate limiting: prevent rapid clicks (>=250ms)
+      if (!canClick(lastClickTime.current, now, 250)) return;
       lastClickTime.current = now;
 
       // Check if it's player's turn
@@ -44,7 +42,9 @@ export function Board() {
       if (success && soundEnabled) {
         // Play place sound
         try {
-          const audio = new Audio('/sounds/place.mp3');
+          const base = (import.meta as any).env?.BASE_URL || '/';
+          const url = new URL('sounds/place.mp3', base.endsWith('/') ? base : `${base}/`).toString();
+          const audio = new Audio(url);
           audio.volume = 0.3;
           audio.play().catch(() => {});
         } catch {}
@@ -147,73 +147,145 @@ export function Board() {
             ))}
           </div>
 
-          {/* Board Grid */}
+          {/* Board Grid - 線の交点方式 */}
           <div
             ref={boardRef}
-            className="grid gap-0 bg-yellow-100 dark:bg-yellow-900 p-3 sm:p-4 rounded-lg shadow-xl border-4 border-gray-800 dark:border-gray-200"
+            className="relative bg-yellow-100 dark:bg-yellow-900 p-8 sm:p-12 rounded-lg shadow-xl border-4 border-gray-800 dark:border-gray-200"
             style={{
-              gridTemplateColumns: 'repeat(15, minmax(0, 1fr))',
               aspectRatio: '1 / 1',
               maxWidth: 'min(90vw, 800px)',
               width: '100%',
             }}
           >
-            {Array.from({ length: 15 }, (_, y) =>
-              Array.from({ length: 15 }, (_, x) => {
-                const stoneValue = board[y][x];
-                const isHovered = hoveredCell?.[0] === x && hoveredCell?.[1] === y;
-                const isFocused = focusedCell?.[0] === x && focusedCell?.[1] === y;
-                const isWin = isWinCell(x, y);
-                const isEmpty = stoneValue === 0;
-                const canPlace = isEmpty && playerColor === currentTurn;
+            {/* 碁盤の線 */}
+            <svg
+              className="absolute inset-8 sm:inset-12 w-[calc(100%-4rem)] sm:w-[calc(100%-6rem)] h-[calc(100%-4rem)] sm:h-[calc(100%-6rem)]"
+              viewBox="0 0 14 14"
+              preserveAspectRatio="none"
+            >
+              {/* 縦線 */}
+              {Array.from({ length: 15 }, (_, i) => (
+                <line
+                  key={`v${i}`}
+                  x1={i}
+                  y1={0}
+                  x2={i}
+                  y2={14}
+                  stroke="currentColor"
+                  strokeWidth="0.05"
+                  className="text-gray-700 dark:text-gray-400"
+                />
+              ))}
+              {/* 横線 */}
+              {Array.from({ length: 15 }, (_, i) => (
+                <line
+                  key={`h${i}`}
+                  x1={0}
+                  y1={i}
+                  x2={14}
+                  y2={i}
+                  stroke="currentColor"
+                  strokeWidth="0.05"
+                  className="text-gray-700 dark:text-gray-400"
+                />
+              ))}
+              {/* 星（天元と4隅） */}
+              {[[7, 7], [3, 3], [3, 11], [11, 3], [11, 11]].map(([cx, cy], idx) => (
+                <circle
+                  key={`star${idx}`}
+                  cx={cx}
+                  cy={cy}
+                  r="0.15"
+                  fill="currentColor"
+                  className="text-gray-700 dark:text-gray-400"
+                />
+              ))}
+            </svg>
 
-                return (
-                  <button
-                    key={`${x}-${y}`}
-                    className={clsx(
-                      'relative aspect-square border-2 border-gray-700 dark:border-gray-400 bg-yellow-100 dark:bg-yellow-900',
-                      'hover:bg-yellow-200 dark:hover:bg-yellow-800 transition-all duration-150',
-                      'focus:outline-none touch-manipulation',
-                      {
-                        'ring-4 ring-blue-500 ring-offset-2': isFocused,
-                        'bg-blue-100 dark:bg-blue-900': isHovered && canPlace,
-                        'cursor-pointer': canPlace,
-                        'cursor-not-allowed': !canPlace,
-                      }
-                    )}
-                    onClick={() => handleCellClick(x, y)}
-                    onMouseEnter={() => setHoveredCell([x, y])}
-                    onMouseLeave={() => setHoveredCell(null)}
-                    onFocus={() => setFocusedCell([x, y])}
-                    disabled={!canPlace}
-                    aria-label={`位置 ${xLabels[x]}${yLabels[y]}`}
-                    tabIndex={isFocused ? 0 : -1}
-                  >
-                    {/* Stone */}
-                    {stoneValue !== 0 && (
-                      <Stone color={stoneValue === 1 ? 'black' : 'white'} isWin={isWin} />
-                    )}
+            {/* 交点のクリック可能エリア */}
+            <div
+              className="absolute inset-8 sm:inset-12"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(15, 1fr)',
+                gridTemplateRows: 'repeat(15, 1fr)',
+                gap: 0,
+              }}
+            >
+              {Array.from({ length: 15 }, (_, y) =>
+                Array.from({ length: 15 }, (_, x) => {
+                  const stoneValue = board[y][x];
+                  const isHovered = hoveredCell?.[0] === x && hoveredCell?.[1] === y;
+                  const isFocused = focusedCell?.[0] === x && focusedCell?.[1] === y;
+                  const isWin = isWinCell(x, y);
+                  const isEmpty = stoneValue === 0;
+                  const canPlace = isEmpty && playerColor === currentTurn;
 
-                    {/* Preview stone on hover */}
-                    {isHovered && isEmpty && canPlace && playerColor && (
-                      <div
-                        className={clsx(
-                          'absolute inset-0.5 rounded-full opacity-60 border-2',
-                          playerColor === 'black'
-                            ? 'bg-stone-black border-gray-600'
-                            : 'bg-stone-white border-gray-400'
-                        )}
-                      />
-                    )}
+                  return (
+                    <button
+                      key={`${x}-${y}`}
+                      className={clsx(
+                        'relative flex items-center justify-center',
+                        'hover:bg-blue-200/30 dark:hover:bg-blue-800/30 transition-all duration-150',
+                        'focus:outline-none touch-manipulation',
+                        'w-full h-full',
+                        {
+                          'ring-2 ring-blue-500 rounded-full': isFocused,
+                          'bg-blue-100/50 dark:bg-blue-900/50 rounded-full': isHovered && canPlace,
+                          'cursor-pointer': canPlace,
+                          'cursor-not-allowed': !canPlace,
+                        }
+                      )}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleCellClick(x, y);
+                      }}
+                      onTouchEnd={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleCellClick(x, y);
+                      }}
+                      onMouseEnter={() => setHoveredCell([x, y])}
+                      onMouseLeave={() => setHoveredCell(null)}
+                      onFocus={() => setFocusedCell([x, y])}
+                      aria-label={`位置 ${xLabels[x]}${yLabels[y]}`}
+                      tabIndex={isFocused ? 0 : -1}
+                    >
+                      {/* Stone - 交点中央に配置、25%縮小 */}
+                      {stoneValue !== 0 && (
+                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                          <div className="w-3/4 h-3/4">
+                            <Stone color={stoneValue === 1 ? 'black' : 'white'} isWin={isWin} />
+                          </div>
+                        </div>
+                      )}
 
-                    {/* Win line highlight */}
-                    {isWin && (
-                      <div className="absolute inset-0 border-4 border-accent rounded-full animate-pulse shadow-lg shadow-accent/50" />
-                    )}
-                  </button>
-                );
-              })
-            )}
+                      {/* Preview stone on hover */}
+                      {isHovered && isEmpty && canPlace && playerColor && (
+                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                          <div
+                            className={clsx(
+                              'w-6 h-6 sm:w-7 sm:h-7 rounded-full opacity-60 border-2',
+                              playerColor === 'black'
+                                ? 'bg-stone-black border-gray-600'
+                                : 'bg-stone-white border-gray-400'
+                            )}
+                          />
+                        </div>
+                      )}
+
+                      {/* Win line highlight */}
+                      {isWin && (
+                        <div
+                          className="absolute w-8 h-8 sm:w-9 sm:h-9 border-4 border-accent rounded-full animate-pulse shadow-lg shadow-accent/50 pointer-events-none"
+                        />
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
 

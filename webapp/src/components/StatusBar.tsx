@@ -40,7 +40,7 @@ export function StatusBar() {
   };
 
   return (
-    <div className="card p-4">
+    <div className="card p-4" role="status" aria-live="polite">
       <div className="flex flex-wrap items-center justify-between gap-4">
         {/* Player Color */}
         <div className="flex items-center gap-2">

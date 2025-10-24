@@ -2,10 +2,12 @@ import { useGameStore } from '../store/gameStore';
 import { Button } from './ui/Button';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
+import { useGomokuWs } from '../hooks/useGomokuWs';
 
 export function ResultModal() {
   const navigate = useNavigate();
   const { winner, playerColor, winLine, setGameEnded, setWinner, setWinLine } = useGameStore();
+  const { startNewGame } = useGomokuWs();
 
   const isPlayerWin = winner === playerColor;
   const isDraw = winner === null;
@@ -36,10 +38,12 @@ export function ResultModal() {
   };
 
   const handlePlayAgain = () => {
+    // サーバーに新規ゲーム開始を送信
+    startNewGame();
+    // ローカル状態もリセット
     setGameEnded(false);
     setWinner(null);
     setWinLine(null);
-    // Stay in current room for another game
   };
 
   return (

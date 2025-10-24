@@ -16,7 +16,23 @@
     "start:prod": "npm run web:build && node dist/server/index.js",
     "go": "cross-env DEV=1 tsx scripts/dev.ts",
     "invite": "tsx scripts/invite.ts",
+    "oneclick": "bash scripts/oneclick.sh",
     "smoke": "tsx scripts/smoke-ws.ts",
+    "test:e2e": "node -e \"process.exit(0)\" && npm run test:ws",
+    "test:ws": "npm run test:double && npm run test:ttl && npm run test:rate && npm run test:order && npm run test:reconnect && npm run test:scheme && npm run test:basepath",
+    "test:double": "tsx scripts/test-double-join.ts",
+    "test:ttl": "cross-env TOKEN_TTL_MIN=1 tsx scripts/test-token-expire.ts",
+    "test:rate": "tsx scripts/test-rate-limit.ts",
+    "test:order": "tsx scripts/test-ordering.ts",
+    "test:reconnect": "tsx scripts/test-reconnect.ts",
+    "test:scheme": "npm run web:build && tsx scripts/test-scheme-staticcheck.ts",
+    "test:basepath": "cross-env BASE_PATH=/app tsx scripts/test-basepath.ts",
+    "test:tunnel": "tsx scripts/test-tunnel.ts",
+    "test:mobile": "tsx scripts/test-mobile-friendly.ts",
+    "test:reconnect:mobile": "tsx scripts/test-reconnect-mobile.ts",
+    "test:rate-order": "tsx scripts/test-rate-order.ts",
+    "test:ws-scheme": "tsx scripts/test-ws-scheme.ts",
+    "test:all:e2e": "npm run test:mobile && npm run test:reconnect:mobile && npm run test:rate-order && npm run test:ws-scheme && npm run test:basepath",
     "tunnel": "tsx scripts/tunnel.ts",
     "test": "vitest",
     "lint": "eslint server/**/*.ts",
@@ -43,7 +59,8 @@
     "eslint": "^8.56.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
-    "prettier": "^3.1.1"
+    "prettier": "^3.1.1",
+    "pino-pretty": "^10.3.1"
   },
   "engines": {
     "node": ">=20.0.0"

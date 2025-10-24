@@ -47,6 +47,15 @@ export interface GameState {
   resetGame: () => void;
 }
 
+function loadBool(key: string, def: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? def : v === '1';
+  } catch {
+    return def;
+  }
+}
+
 export const useGameStore = create<GameState>()(
   subscribeWithSelector((set) => ({
     // Initial state
@@ -65,8 +74,8 @@ export const useGameStore = create<GameState>()(
       blackConnected: false,
       whiteConnected: false,
     },
-    isDarkMode: false,
-    soundEnabled: false,
+    isDarkMode: loadBool('gomoku:dark', false),
+    soundEnabled: loadBool('gomoku:sound', false),
     showInviteModal: false,
 
     // Actions
@@ -80,8 +89,16 @@ export const useGameStore = create<GameState>()(
     setWinner: (winner) => set({ winner }),
     setWinLine: (line) => set({ winLine: line }),
     setPlayers: (players) => set({ players }),
-    toggleDarkMode: () => set((state) => ({ isDarkMode: !state.isDarkMode })),
-    toggleSound: () => set((state) => ({ soundEnabled: !state.soundEnabled })),
+    toggleDarkMode: () => set((state) => {
+      const next = !state.isDarkMode;
+      try { localStorage.setItem('gomoku:dark', next ? '1' : '0'); } catch {}
+      return { isDarkMode: next };
+    }),
+    toggleSound: () => set((state) => {
+      const next = !state.soundEnabled;
+      try { localStorage.setItem('gomoku:sound', next ? '1' : '0'); } catch {}
+      return { soundEnabled: next };
+    }),
     setShowInviteModal: (show) => set({ showInviteModal: show }),
     resetGame: () =>
       set({
