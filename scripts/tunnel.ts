@@ -14,6 +14,8 @@ export interface TunnelResult {
 export interface StartTunnelOptions {
   timeoutMs?: number;
   silent?: boolean;
+  protocol?: 'quic' | 'http2' | 'auto';
+  targetUrl?: string; // default http://127.0.0.1:<port>
 }
 
 /**
@@ -33,11 +35,20 @@ export async function startCloudflareTunnel(
   }
 
   if (!options.silent) {
-    console.log(pc.blue('🌐 Starting Cloudflare Tunnel...'));
+    const proto = options.protocol ? ` (${options.protocol})` : '';
+    console.log(pc.blue(`🌐 Starting Cloudflare Tunnel${proto}...`));
   }
 
-  const child = spawn(binary, ['tunnel', '--url', `http://localhost:${port}`], {
+  const target = options.targetUrl ?? `http://127.0.0.1:${port}`;
+  const args = ['tunnel'];
+  if (options.protocol) {
+    args.push('--protocol', options.protocol);
+  }
+  args.push('--url', target);
+
+  const child = spawn(binary, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, UNBUFFERED: '1' },
   });
 
   const timeoutMs = options.timeoutMs ?? 15000;
@@ -81,7 +92,11 @@ export async function startCloudflareTunnel(
       const text = data.toString();
       buffer += text;
 
-      const match = buffer.match(TUNNEL_URL_REGEX);
+      // Check for URL in the new text immediately
+      const immediateMatch = text.match(TUNNEL_URL_REGEX);
+      const bufferMatch = buffer.match(TUNNEL_URL_REGEX);
+      const match = immediateMatch || bufferMatch;
+
       if (match) {
         resolved = true;
         clearTimeout(timer);
@@ -108,10 +123,37 @@ export async function startCloudflareTunnel(
     });
 
     child.stderr?.on('data', (data: Buffer) => {
-      if (resolved || options.silent) {
+      if (resolved) {
         return;
       }
-      process.stdout.write(pc.gray(`[cloudflared] ${data.toString()}`));
+
+      const text = data.toString();
+
+      // Check stderr for URL as well
+      const match = text.match(TUNNEL_URL_REGEX);
+      if (match) {
+        resolved = true;
+        clearTimeout(timer);
+
+        if (!options.silent) {
+          console.log(pc.green(`🌐 Tunnel URL: ${match[0]}`));
+        }
+
+        const stop = () => {
+          cleanup();
+          killProcess(child);
+        };
+
+        child.once('exit', cleanup);
+
+        resolve({
+          url: match[0],
+          process: child,
+          stop,
+        });
+      } else if (!options.silent) {
+        process.stdout.write(pc.gray(`[cloudflared] ${text}`));
+      }
     });
 
     child.once('error', (error) => {

@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import pc from 'picocolors';
+import { fetch } from 'undici';
 
 interface SmokeTestOptions {
   roomId: string;
@@ -85,13 +86,13 @@ export async function runSmokeTest(options: SmokeTestOptions): Promise<SmokeTest
                 setTimeout(() => {
                   const placeMessage = {
                     type: 'PLACE',
-                    x: 7,
-                    y: 7,
+                    x: 0,
+                    y: 0,
                   };
 
-                  steps.push('Sending PLACE message...');
+                  steps.push('Sending PLACE(0,0) message...');
                   ws!.send(JSON.stringify(placeMessage));
-                }, 1000);
+                }, 500);
               }
               break;
 
@@ -117,13 +118,15 @@ export async function runSmokeTest(options: SmokeTestOptions): Promise<SmokeTest
         }
       });
 
-      ws.on('error', (error) => {
-        fail(`WebSocket error: ${error.message}`);
+      ws.on('error', (error: any) => {
+        const msg = error?.message || String(error);
+        fail(`WebSocket error: ${msg}`);
       });
 
       ws.on('close', (code, reason) => {
         if (!stateReceived || !moveReceived) {
-          fail(`WebSocket closed unexpectedly: ${code} ${reason}`);
+          const r = typeof reason === 'string' ? reason : (reason as Buffer).toString();
+          fail(`WebSocket closed unexpectedly: code=${code} reason=${r}`);
         }
       });
     } catch (error) {
@@ -141,6 +144,7 @@ async function main() {
   let roomId = '';
   let token = '';
   let wsUrl = 'ws://localhost:3000/ws';
+  let baseUrl = '';
 
   // コマンドライン引数をパース
   for (let i = 0; i < args.length; i++) {
@@ -157,12 +161,40 @@ async function main() {
         wsUrl = args[i + 1];
         i++;
         break;
+      case '--base':
+        baseUrl = args[i + 1];
+        i++;
+        break;
     }
   }
 
+  // 自動部屋作成（room/token未指定時）
   if (!roomId || !token) {
-    console.error(pc.red('❌ Missing required arguments: --room <roomId> --token <token>'));
-    process.exit(1);
+    try {
+      if (!baseUrl) {
+        // derive base from ws URL
+        const w = new URL(wsUrl);
+        const httpProto = w.protocol.replace('ws', 'http');
+        baseUrl = `${httpProto}//${w.host}`;
+      }
+      const res = await fetch(`${baseUrl}/api/rooms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        console.error(pc.red(`❌ Failed to create room: HTTP ${res.status} ${res.statusText} ${body.slice(0,120)}`));
+        process.exit(1);
+      }
+      const data = (await res.json()) as { roomId: string; joinToken: string };
+      roomId = data.roomId;
+      token = data.joinToken;
+      console.log(pc.gray(`Auto-created room ${roomId}.`));
+    } catch (e: any) {
+      console.error(pc.red(`❌ Room creation error: ${e?.message || e}`));
+      process.exit(1);
+    }
   }
 
   console.log(pc.blue('🧪 Running smoke test...'));

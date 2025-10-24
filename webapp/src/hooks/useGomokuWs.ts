@@ -10,6 +10,7 @@ export function useGomokuWs() {
   const pingIntervalRef = useRef<NodeJS.Timeout>();
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
+  const lastJoinRef = useRef<{ roomId: string; token: string } | null>(null);
 
   const {
     setConnectionStatus,
@@ -41,11 +42,13 @@ export function useGomokuWs() {
         wsRef.current.close();
       }
 
+      // Build WS URL with relative scheme (http->ws / https->wss)
       const wsUrl = new URL('/ws', window.location.href);
       wsUrl.protocol = wsUrl.protocol.replace('http', 'ws');
 
       setConnectionStatus('connecting');
       setError(null);
+      lastJoinRef.current = { roomId, token };
 
       try {
         wsRef.current = new WebSocket(wsUrl.toString());
@@ -100,7 +103,9 @@ export function useGomokuWs() {
             setConnectionStatus('reconnecting');
             reconnectAttempts.current++;
 
-            const delay = Math.min(2000 * reconnectAttempts.current, 10000);
+            // Backoff schedule: 0.5s, 1s, 2s, 5s, 10s (max 5 attempts)
+            const schedule = [500, 1000, 2000, 5000, 10000];
+            const delay = schedule[Math.min(reconnectAttempts.current - 1, schedule.length - 1)];
             reconnectTimeoutRef.current = setTimeout(() => {
               connect(roomId, token);
             }, delay);
@@ -120,6 +125,34 @@ export function useGomokuWs() {
     },
     [sendMessage, setConnectionStatus]
   );
+
+  // Reconnect helpers for visibility/network changes
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        const info = lastJoinRef.current;
+        if (info && (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) {
+          // Try immediate reconnect when visible again
+          reconnectAttempts.current = 0;
+          connect(info.roomId, info.token);
+        }
+      }
+    };
+    const handleOnline = () => {
+      const info = lastJoinRef.current;
+      if (navigator.onLine && info && (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)) {
+        reconnectAttempts.current = 0;
+        connect(info.roomId, info.token);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility, { passive: true } as any);
+    window.addEventListener('online', handleOnline, { passive: true } as any);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility as any);
+      window.removeEventListener('online', handleOnline as any);
+    };
+  }, [connect]);
 
   // Handle incoming messages
   const handleMessage = useCallback(
@@ -202,6 +235,11 @@ export function useGomokuWs() {
     return sendMessage({ type: 'RESIGN' });
   }, [sendMessage]);
 
+  // Start new game
+  const startNewGame = useCallback(() => {
+    return sendMessage({ type: 'NEW_GAME' });
+  }, [sendMessage]);
+
   // Disconnect
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -231,6 +269,7 @@ export function useGomokuWs() {
     disconnect,
     placeStone,
     resign,
+    startNewGame,
     sendMessage,
   };
 }
@@ -239,6 +278,7 @@ export function useGomokuWs() {
 function getErrorMessage(code: string): string {
   const errorMessages: Record<string, string> = {
     INVALID_TOKEN: '無効な招待トークンです',
+    TOKEN_EXPIRED: '招待トークンの有効期限が切れています',
     ROOM_NOT_FOUND: 'ルームが見つかりません',
     ROOM_FULL: 'ルームが満員です',
     INVALID_MOVE: '無効な手です',
@@ -254,7 +294,9 @@ function getErrorMessage(code: string): string {
 // Sound utilities
 function playSound(type: 'place' | 'win') {
   try {
-    const audio = new Audio(`/sounds/${type}.mp3`);
+    const base = (import.meta as any).env?.BASE_URL || '/';
+    const url = new URL(`sounds/${type}.mp3`, base.endsWith('/') ? base : `${base}/`).toString();
+    const audio = new Audio(url);
     audio.volume = 0.3;
     audio.play().catch(() => {
       // Ignore audio play errors

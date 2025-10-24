@@ -19,6 +19,10 @@ export interface ResignMessage {
   type: 'RESIGN';
 }
 
+export interface NewGameMessage {
+  type: 'NEW_GAME';
+}
+
 export interface PingMessage {
   type: 'PING';
 }
@@ -27,7 +31,7 @@ export interface PongMessage {
   type: 'PONG';
 }
 
-export type ClientMessage = JoinMessage | PlaceMessage | ResignMessage | PingMessage | PongMessage;
+export type ClientMessage = JoinMessage | PlaceMessage | ResignMessage | NewGameMessage | PingMessage | PongMessage;
 
 // Server -> Client messages
 export interface StateMessage {

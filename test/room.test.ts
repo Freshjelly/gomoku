@@ -69,12 +69,14 @@ describe('Board', () => {
       board.placeStone(13, 7, 'black');
       board.placeStone(12, 7, 'black');
       board.placeStone(11, 7, 'black');
-      
+      board.placeStone(10, 7, 'black');
+
       const result = board.checkWin(10, 7, 'black');
       expect(result).not.toBeNull();
       expect(result).toHaveLength(5);
+      // ラインは左から右の順序で返される
       expect(result).toEqual([
-        [14, 7], [13, 7], [12, 7], [11, 7], [10, 7]
+        [10, 7], [11, 7], [12, 7], [13, 7], [14, 7]
       ]);
     });
 
@@ -136,12 +138,14 @@ describe('Board', () => {
       board.placeStone(7, 13, 'white');
       board.placeStone(7, 12, 'white');
       board.placeStone(7, 11, 'white');
-      
+      board.placeStone(7, 10, 'white');
+
       const result = board.checkWin(7, 10, 'white');
       expect(result).not.toBeNull();
       expect(result).toHaveLength(5);
+      // ラインは上から下の順序で返される
       expect(result).toEqual([
-        [7, 14], [7, 13], [7, 12], [7, 11], [7, 10]
+        [7, 10], [7, 11], [7, 12], [7, 13], [7, 14]
       ]);
     });
 
@@ -254,11 +258,13 @@ describe('Board', () => {
       board.placeStone(6, 7, 'black');
       board.placeStone(7, 7, 'black');
       board.placeStone(8, 7, 'black');
-      
+      board.placeStone(9, 7, 'black'); // 横5連完成
+
       board.placeStone(7, 5, 'black');
       board.placeStone(7, 6, 'black');
       board.placeStone(7, 8, 'black');
-      
+      board.placeStone(7, 9, 'black'); // 縦5連完成
+
       const result = board.checkWin(7, 7, 'black');
       expect(result).not.toBeNull();
       expect(result).toHaveLength(5);
@@ -281,7 +287,7 @@ describe('Board', () => {
     it('盤面の状態を正しく取得できる', () => {
       board.placeStone(7, 7, 'black');
       board.placeStone(8, 8, 'white');
-      
+
       const boardState = board.getBoard();
       expect(boardState[7][7]).toBe(1);
       expect(boardState[8][8]).toBe(2);
@@ -292,9 +298,59 @@ describe('Board', () => {
       board.placeStone(7, 7, 'black');
       const boardState1 = board.getBoard();
       const boardState2 = board.getBoard();
-      
+
       boardState1[7][7] = 999; // 変更
       expect(boardState2[7][7]).toBe(1); // 元の値が保持される
+    });
+  });
+
+  describe('引き分け判定', () => {
+    it('空盤面は引き分けではない', () => {
+      expect(board.isDraw()).toBe(false);
+    });
+
+    it('1マスでも空きがあれば引き分けではない', () => {
+      // ほぼ全マスを埋める（中央を除く）
+      for (let y = 0; y < 15; y++) {
+        for (let x = 0; x < 15; x++) {
+          if (x === 7 && y === 7) continue;
+          board.placeStone(x, y, (x + y) % 2 === 0 ? 'black' : 'white');
+        }
+      }
+      expect(board.isDraw()).toBe(false);
+    });
+
+    it('全マス埋まったら引き分け', () => {
+      // 全マスを埋める（5連にならないパターン）
+      for (let y = 0; y < 15; y++) {
+        for (let x = 0; x < 15; x++) {
+          board.placeStone(x, y, (x + y) % 2 === 0 ? 'black' : 'white');
+        }
+      }
+      expect(board.isDraw()).toBe(true);
+    });
+  });
+
+  describe('6連以上の勝利判定', () => {
+    it('6連で勝利判定される', () => {
+      board.placeStone(4, 7, 'black');
+      board.placeStone(5, 7, 'black');
+      board.placeStone(6, 7, 'black');
+      board.placeStone(7, 7, 'black');
+      board.placeStone(8, 7, 'black');
+      board.placeStone(9, 7, 'black');
+
+      const result = board.checkWin(9, 7, 'black');
+      expect(result).not.toBeNull();
+      expect(result).toHaveLength(5);
+    });
+
+    it('7連以上でも勝利判定される', () => {
+      for (let x = 3; x <= 10; x++) {
+        board.placeStone(x, 7, 'black');
+      }
+      const result = board.checkWin(10, 7, 'black');
+      expect(result).not.toBeNull();
     });
   });
 });
